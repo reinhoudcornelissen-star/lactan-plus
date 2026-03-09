@@ -1,0 +1,41 @@
+from flask import Flask, render_template, request
+
+app = Flask(__name__)
+
+FOOD_DATABASE = {
+    "Ontbijt": [("Havermout", 45), ("Witbrood", 40), ("Muesli", 50)],
+    "Tussendoortje VM": [("Banaan", 25), ("Energiereep", 30), ("Sportdrank", 30)],
+    "Lunch": [("Wrap", 80), ("Witte rijst", 45), ("Volkorenpasta", 25)],
+    "Tussendoortje NM": [("Energiereep", 30), ("Sportdrank", 30), ("Rozijnen", 35)],
+    "Avondmaal": [("Witte pasta", 45), ("Aardappelpuree", 30), ("Zoete aardappel", 40)]
+}
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    plan = None
+    totaal_kh_dag = 0
+    gewicht = 75
+    dagen = 1
+
+    if request.method == "POST":
+        gewicht = float(request.form.get("gewicht", 75))
+        duur_idx = int(request.form.get("duur", 1))
+        dagen = int(request.form.get("dagen", 1))
+        
+        # Mapping van duur index naar g/kg
+        mapping = {0: 5, 1: 8, 2: 10}
+        g_per_kg = mapping.get(duur_idx, 8)
+        totaal_kh_dag = gewicht * g_per_kg
+        
+        meal_targets = {"Ontbijt": 0.20, "Tussendoortje VM": 0.10, "Lunch": 0.25, "Tussendoortje NM": 0.10, "Avondmaal": 0.35}
+        plan = {meal: {"target": totaal_kh_dag * ratio, "options": []} for meal, ratio in meal_targets.items()}
+        
+        for meal in plan:
+            db_key = "Tussendoortje VM" if "Tussendoortje" in meal else meal
+            for food, kh in FOOD_DATABASE.get(db_key, []):
+                plan[meal]["options"].append((food, plan[meal]["target"] / kh))
+
+    return render_template("index.html", plan=plan, total=totaal_kh_dag, gewicht=gewicht, dagen=dagen)
+
+if __name__ == "__main__":
+    app.run(debug=True)
