@@ -1,0 +1,963 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from scipy.interpolate import PchipInterpolator
+from datetime import date, datetime
+from io import BytesIO
+import sqlite3
+
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib import colors
+    from reportlab.lib.utils import ImageReader
+    REPORTLAB_OK = True
+except ImportError:
+    REPORTLAB_OK = False
+
+# ─────────────────────────────────────────────
+#  PAGINA CONFIG
+# ─────────────────────────────────────────────
+st.set_page_config(page_title="LacTan+", page_icon="🚴", layout="wide")
+
+# ─────────────────────────────────────────────
+#  LOGIN
+# ─────────────────────────────────────────────
+USERS = {"sportlab": "welkom_sportlab", "admin": "lactan2024"}
+
+def check_login():
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if st.session_state.logged_in:
+        return True
+    st.markdown("""
+        <style>
+        [data-testid="stAppViewContainer"]{background:linear-gradient(135deg,#0F172A 0%,#1E3A5F 100%);}
+        .login-wrap{max-width:420px;margin:60px auto;padding:48px 40px;
+            background:white;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,0.3);}
+        </style>
+    """, unsafe_allow_html=True)
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+    st.markdown("## 🚴 LacTan+")
+    st.markdown("##### Inspanningstest Platform")
+    st.markdown("---")
+    username = st.text_input("Gebruikersnaam", placeholder="sportlab")
+    password = st.text_input("Wachtwoord", type="password")
+    if st.button("Inloggen", type="primary", use_container_width=True):
+        if username in USERS and USERS[username] == password:
+            st.session_state.logged_in = True
+            st.rerun()
+        else:
+            st.error("Ongeldige gebruikersnaam of wachtwoord")
+    st.markdown('</div>', unsafe_allow_html=True)
+    return False
+
+if not check_login():
+    st.stop()
+
+# ─────────────────────────────────────────────
+#  DATABASE
+# ─────────────────────────────────────────────
+def init_db():
+    conn = sqlite3.connect('sportlab_data.db')
+    conn.execute('''CREATE TABLE IF NOT EXISTS tests
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     naam TEXT, datum TEXT, watt TEXT, lac TEXT, hr TEXT)''')
+    conn.commit()
+    conn.close()
+
+def save_test(naam, datum, watt_list, lac_list, hr_list):
+    conn = sqlite3.connect('sportlab_data.db')
+    conn.execute("INSERT INTO tests (naam, datum, watt, lac, hr) VALUES (?,?,?,?,?)",
+                 (naam, str(datum),
+                  ",".join(map(str, watt_list)),
+                  ",".join(map(str, lac_list)),
+                  ",".join(map(str, hr_list))))
+    conn.commit()
+    conn.close()
+
+def load_tests():
+    conn = sqlite3.connect('sportlab_data.db')
+    try:
+        df = pd.read_sql("SELECT * FROM tests ORDER BY id DESC", conn)
+    except Exception:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
+def delete_test(test_id):
+    conn = sqlite3.connect('sportlab_data.db')
+    conn.execute("DELETE FROM tests WHERE id = ?", (int(test_id),))
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# ─────────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────────
+def interp_val(x_target, x_data, y_data):
+    try:
+        val = PchipInterpolator(x_data, y_data)(x_target)
+        return float(np.atleast_1d(val)[0])
+    except Exception:
+        return 0.0
+
+def bereken_leeftijd(geboortedatum):
+    today = date.today()
+    return today.year - geboortedatum.year - ((today.month, today.day) < (geboortedatum.month, geboortedatum.day))
+
+def bereken_drempels(x_v, lac_v, lt1_methode, lt2_methode,
+                     lt1_handmatig=None, lt2_handmatig=None):
+    xf = np.linspace(x_v.min(), x_v.max(), 1000)
+    yf = PchipInterpolator(x_v, lac_v)(xf)
+    baseline = float(np.mean(lac_v[:2]))
+    lt1_idx = np.where(yf >= baseline + 1.0)[0]
+    lt1_w = float(xf[lt1_idx[0]]) if lt1_idx.size > 0 else float(x_v[0])
+    if lt1_methode == "Handmatig" and lt1_handmatig is not None:
+        lt1_w = float(lt1_handmatig)
+    s_idx  = np.where(yf >= baseline + 0.4)[0]
+    s_base = s_idx[0] if s_idx.size > 0 else 0
+    dist = np.abs(
+        (yf[-1] - yf[s_base]) * xf[s_base:] -
+        (xf[-1] - xf[s_base]) * yf[s_base:] +
+        xf[-1] * yf[s_base] - yf[-1] * xf[s_base]
+    )
+    lt2_w = float(xf[s_base + np.argmax(dist)])
+    if lt2_methode == "Handmatig" and lt2_handmatig is not None:
+        lt2_w = float(lt2_handmatig)
+    return lt1_w, lt2_w, xf, yf
+
+def bereken_vo2max(watt_max, gew, hr_max, hr_rust=60):
+    """
+    VO2max berekening via meerdere methoden, gemiddelde als eindwaarde.
+    1. Fiets ergometer formule (Storer et al.): VO2max = (10.8 * Wmax / kg) + 7
+    2. Inline correctie hartslag reserve (Karvonen-gebaseerd)
+    3. Tanaka HRmax schatting indien nodig
+    """
+    # Methode 1: Storer et al. (fietsergometer)
+    vo2_storer = (10.8 * watt_max / gew) + 7.0
+
+    # Methode 2: Legge & Banister correctie
+    # VO2max (L/min) = (0.01141 * Wmax) + (0.01206 * lichaamsgewicht) - 0.9090
+    vo2_lb_lmin = (0.01141 * watt_max) + (0.01206 * gew) - 0.9090
+    vo2_lb = (vo2_lb_lmin * 1000) / gew  # ml/kg/min
+
+    # Gemiddelde van beide methoden
+    vo2_gem = (vo2_storer + vo2_lb) / 2
+    return round(vo2_gem, 1), round(vo2_storer, 1), round(vo2_lb, 1)
+
+def energie_verdeling(tdee, lt1_w, lt2_w, lt2_w_ref):
+    """Schat energieverdeling per zone op basis van TDEE en drempelverhouding."""
+    pct_z1 = 0.30; pct_z2 = 0.35; pct_z3 = 0.20; pct_z4 = 0.10; pct_z5 = 0.05
+    return {
+        "Basaalmetabolisme (BMR)": int(tdee / 1.4),
+        "Totaal dagelijks (TDEE)": int(tdee),
+        "Z1 Herstel (geschat)":    int(tdee * pct_z1),
+        "Z2 Duur (geschat)":       int(tdee * pct_z2),
+        "Z3 Tempo (geschat)":      int(tdee * pct_z3),
+        "Z4 Drempel (geschat)":    int(tdee * pct_z4),
+        "Z5 VO2max (geschat)":     int(tdee * pct_z5),
+    }
+
+# ─────────────────────────────────────────────
+#  PDF GENERATIE
+# ─────────────────────────────────────────────
+def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
+                 gew, leng, leeft, gesl,
+                 bmi, vo2_gem, vo2_storer, vo2_lb, tdee, bmr,
+                 lt1_w, lt2_w, max_vals,
+                 fig, zones_lijst, test_df,
+                 logo_file, opmerkingen):
+    if not REPORTLAB_OK:
+        return None
+
+    buffer = BytesIO()
+    c = rl_canvas.Canvas(buffer, pagesize=A4)
+    W, H = A4
+    navy     = colors.HexColor("#0F172A")
+    blue     = colors.HexColor("#1E88E5")
+    blue_mid = colors.HexColor("#1565C0")
+    light    = colors.HexColor("#EFF6FF")
+    grey_bg  = colors.HexColor("#F8FAFC")
+    grey_ln  = colors.HexColor("#CBD5E1")
+    green    = colors.HexColor("#16A34A")
+    red_c    = colors.HexColor("#DC2626")
+
+    # ── Sub-functies ────────────────────────────
+    def draw_header(titel, sub, pagina, totaal):
+        # Achtergrond
+        c.setFillColor(navy)
+        c.rect(0, H-112, W, 112, fill=1, stroke=0)
+        # Blauwe accentlijn
+        c.setFillColor(blue)
+        c.rect(0, H-115, W, 3, fill=1, stroke=0)
+        # Logo
+        if logo_file:
+            try:
+                logo_file.seek(0)
+                c.drawImage(ImageReader(logo_file), W-115, H-100,
+                            width=85, height=75, preserveAspectRatio=True, mask='auto')
+            except Exception:
+                pass
+        # Titel
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 24)
+        c.drawString(45, H-48, titel)
+        c.setFont("Helvetica", 11)
+        c.setFillColor(colors.HexColor("#93C5FD"))
+        c.drawString(45, H-66, sub)
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFont("Helvetica", 9)
+        c.drawString(45, H-82, f"Sportlab Achterbos  —  LacTan+  |  {date.today().strftime('%d %B %Y')}  |  Pagina {pagina} / {totaal}")
+        # Rechts: atleet info
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawRightString(W-130 if logo_file else W-45, H-48, naam)
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.HexColor("#93C5FD"))
+        c.drawRightString(W-130 if logo_file else W-45, H-62, f"Testdatum: {datum}")
+        c.drawRightString(W-130 if logo_file else W-45, H-75, f"{sport}  |  {gesl}")
+
+    def section(tekst, y, icon=""):
+        c.setFillColor(blue)
+        c.rect(45, y, W-90, 22, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor("#93C5FD"))
+        c.rect(45, y, 5, 22, fill=1, stroke=0)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(58, y+6, f"{icon}  {tekst}" if icon else tekst)
+        return y - 16   # extra ruimte onder sectietitel
+
+    def pill(label, value, unit, x, y, w=118, h=52, color=None):
+        bg = color if color else light
+        c.setFillColor(bg)
+        c.roundRect(x, y, w, h, 7, fill=1, stroke=0)
+        c.setFillColor(grey_ln)
+        c.roundRect(x, y, w, h, 7, fill=0, stroke=1)
+        c.setFillColor(blue)
+        c.setFont("Helvetica-Bold", 8)
+        c.drawCentredString(x+w/2, y+h-14, label.upper())
+        c.setFillColor(navy)
+        c.setFont("Helvetica-Bold", 15)
+        c.drawCentredString(x+w/2, y+18, str(value))
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFont("Helvetica", 7.5)
+        c.drawCentredString(x+w/2, y+7, unit)
+
+    def row_line(y, shade=False):
+        if shade:
+            c.setFillColor(grey_bg)
+            c.rect(45, y-3, W-90, 16, fill=1, stroke=0)
+
+    def footer():
+        c.setFillColor(grey_ln)
+        c.rect(0, 0, W, 28, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFont("Helvetica", 7.5)
+        c.drawString(45, 10, f"LacTan+ Inspanningsanalyse  |  {naam}  |  {datum}  |  Vertrouwelijk document")
+        c.drawRightString(W-45, 10, "Sportlab Achterbos")
+
+    lt1_hr = interp_val(lt1_w, test_df["Watt"].values.astype(float), test_df["HR"].values.astype(float))
+    lt2_hr = interp_val(lt2_w, test_df["Watt"].values.astype(float), test_df["HR"].values.astype(float))
+
+    # ════════════════════════════════════════════
+    #  PAGINA 1  –  Overzicht & Grafiek
+    # ════════════════════════════════════════════
+    draw_header("INSPANNINGSTEST", f"Fysiologisch Testrapport  |  {sport}", 1, 3)
+    y = H - 130
+
+    # ── Pills rij 1: antropometrie ──
+    pw = 118; gap = 10; pill_h = 56
+    px = 45
+    pill("Gewicht",  f"{gew}",   "kg",     px,        y - pill_h); px += pw+gap
+    pill("Lengte",   f"{leng}",  "cm",     px,        y - pill_h); px += pw+gap
+    pill("Leeftijd", f"{leeft}", "jaar",   px,        y - pill_h); px += pw+gap
+    pill("Geslacht", gesl,       "",       px,        y - pill_h)
+
+    y = y - pill_h - 14   # ruimte tussen de twee rijen pills
+
+    # ── Pills rij 2: fysiologie ──
+    px = 45
+    pill("BMI",       f"{bmi:.1f}",         "kg/m²",      px, y - pill_h); px += pw+gap
+    pill("VO₂max",    f"{vo2_gem}",          "ml/kg/min",  px, y - pill_h); px += pw+gap
+    pill("Max. Watt", f"{max_vals['Watt']}", "W",          px, y - pill_h); px += pw+gap
+    pill("Max. HR",   f"{max_vals['HR']}",   "bpm",        px, y - pill_h)
+
+    y = y - pill_h - 22   # ruimte onder pills, voor sectietitel
+
+    y = section("METABOLE DREMPELS", y)
+    y -= 14   # lucht onder sectietitel
+
+    # LT1 blok
+    blok_h = 58
+    blok_w = (W - 100) / 2 - 5
+    c.setFillColor(colors.HexColor("#DCFCE7"))
+    c.roundRect(45, y - blok_h, blok_w, blok_h, 7, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#BBF7D0"))
+    c.roundRect(45, y - blok_h, blok_w, blok_h, 7, fill=0, stroke=1)
+    c.setFillColor(green)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(58, y - 14, "LT1  –  Aerobe drempel")
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(58, y - 36, f"{int(lt1_w)} W")
+    c.setFillColor(colors.HexColor("#374151"))
+    c.setFont("Helvetica", 10)
+    c.drawString(58 + 80, y - 36, f"@ {int(lt1_hr)} bpm")
+
+    # LT2 blok
+    x2 = 45 + blok_w + 10
+    c.setFillColor(colors.HexColor("#FEE2E2"))
+    c.roundRect(x2, y - blok_h, blok_w, blok_h, 7, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#FECACA"))
+    c.roundRect(x2, y - blok_h, blok_w, blok_h, 7, fill=0, stroke=1)
+    c.setFillColor(red_c)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x2 + 13, y - 14, "LT2  –  Anaerobe drempel")
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(x2 + 13, y - 36, f"{int(lt2_w)} W")
+    c.setFillColor(colors.HexColor("#374151"))
+    c.setFont("Helvetica", 10)
+    c.drawString(x2 + 13 + 80, y - 36, f"@ {int(lt2_hr)} bpm")
+
+    y = y - blok_h - 24   # ruimte onder drempelblokken
+
+    y = section("LACTAAT- EN HARTSLAGCURVE", y)
+    y -= 10
+    img_buf = BytesIO()
+    fig.savefig(img_buf, format='png', dpi=200, bbox_inches='tight')
+    img_buf.seek(0)
+    graph_h = max(190, min(230, y - 45))
+    c.drawImage(ImageReader(img_buf), 45, y - graph_h, width=W-90, height=graph_h)
+
+    footer()
+
+    # ════════════════════════════════════════════
+    #  PAGINA 2  –  Zones + Data + Energie
+    # ════════════════════════════════════════════
+    c.showPage()
+    draw_header("INSPANNINGSTEST", "Trainingszones & Meetdata", 2, 3)
+    y = H - 130
+
+    y = section("TRAININGSZONES", y)
+    y -= 14   # ruimte onder sectietitel
+
+    RZ = 26   # rij-hoogte zones
+    RT = 25   # rij-hoogte testdata
+    RE = 25   # rij-hoogte energie
+
+    # Tabelheader zones
+    c.setFillColor(navy); c.setFont("Helvetica-Bold", 9.5)
+    cols_z = [45, 95, 158, 290, 400, 478]
+    hdrs_z = ["Zone", "Naam", "Vermogen (W)", "Hartslag (bpm)", "Borg", "% LT2"]
+    for cx, hdr in zip(cols_z, hdrs_z):
+        c.drawString(cx, y, hdr)
+    y -= 8
+    c.setStrokeColor(blue); c.setLineWidth(0.8); c.line(45, y, W-45, y); y -= RZ
+
+    c.setFont("Helvetica", 10)
+    for idx_z, z in enumerate(zones_lijst):
+        w_van = int(lt2_w * z["W_van"] / 100)
+        w_tot = int(lt2_w * z["W_tot"] / 100)
+        h_van = int(max_vals["HR"] * z["HR_van"] / 100)
+        h_tot = int(max_vals["HR"] * z["HR_tot"] / 100)
+        try:
+            zc = colors.HexColor(z["color"])
+        except Exception:
+            zc = colors.lightblue
+        if idx_z % 2 == 0:
+            c.setFillColor(grey_bg)
+            c.rect(45, y-6, W-90, RZ, fill=1, stroke=0)
+        c.setFillColor(zc)
+        c.roundRect(cols_z[0], y-3, 42, 17, 3, fill=1, stroke=0)
+        c.setFillColor(navy); c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(cols_z[0]+21, y+3, z["Zone"])
+        c.setFont("Helvetica", 10); c.setFillColor(colors.black)
+        c.drawString(cols_z[1], y+3, str(z["Naam"]))
+        c.drawString(cols_z[2], y+3, f"{w_van} – {w_tot}")
+        c.drawString(cols_z[3], y+3, f"{h_van} – {h_tot}")
+        c.drawString(cols_z[4], y+3, str(z["Borg"]))
+        c.drawString(cols_z[5], y+3, f"{z['W_van']}–{z['W_tot']}%")
+        y -= RZ
+        if y < 90:
+            break
+
+    y -= 22   # ruimte tussen secties
+    y = section("RUWE TESTGEGEVENS PER TRAP", y)
+    y -= 14
+
+    col_t = [50, 130, 248, 365, 465]
+    hdrs_t = ["Trap", "Vermogen (W)", "Hartslag (bpm)", "Lactaat (mmol/L)", "Borg"]
+    c.setFillColor(navy); c.setFont("Helvetica-Bold", 9.5)
+    for cx, hdr in zip(col_t, hdrs_t):
+        c.drawString(cx, y, hdr)
+    y -= 8; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= RT
+
+    c.setFont("Helvetica", 10)
+    for i, row in test_df.reset_index(drop=True).iterrows():
+        if i % 2 == 0:
+            c.setFillColor(grey_bg)
+            c.rect(45, y-6, W-90, RT, fill=1, stroke=0)
+        c.setFillColor(colors.black)
+        c.drawString(col_t[0], y+3, f"Trap {i+1}")
+        c.drawString(col_t[1], y+3, f"{int(float(row['Watt']))} W")
+        c.drawString(col_t[2], y+3, f"{int(float(row['HR']))} bpm")
+        c.drawString(col_t[3], y+3, f"{float(row['Lac']):.2f}")
+        borg_val = row.get('Borg', '-')
+        c.drawString(col_t[4], y+3, str(borg_val) if str(borg_val) != 'nan' else "–")
+        y -= RT
+        if y < 90:
+            c.showPage()
+            draw_header("INSPANNINGSTEST", "Trainingszones & Meetdata", 2, 3)
+            y = H - 130
+
+    # Energieoverzicht
+    y -= 22
+    if y > 160:
+        y = section("GESCHATTE DAGELIJKSE ENERGIEBEHOEFTE", y)
+        y -= 10
+
+        energie = {
+            "Basaalmetabolisme (BMR)":   (int(bmr),          "kcal/dag – ruststofwisseling"),
+            "Totaal dagelijks (TDEE)":   (int(tdee),         f"kcal/dag – PAL factor {pal:.1f}"),
+            "Energie lage intensiteit (Z1-Z2)": (int(tdee * 0.60), "kcal – duurtraining"),
+            "Energie hoge intensiteit (Z3-Z4)": (int(tdee * 0.28), "kcal – drempeltraining"),
+            "Energie maximaal (Z5)":     (int(tdee * 0.12),  "kcal – VO2max inspanning"),
+        }
+        c.setFont("Helvetica-Bold", 9.5); c.setFillColor(navy)
+        c.drawString(55, y, "Component"); c.drawString(295, y, "Waarde"); c.drawString(390, y, "Toelichting")
+        y -= 8; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= RE
+
+        c.setFont("Helvetica", 10)
+        for ei, (label, (val, toel)) in enumerate(energie.items()):
+            if ei % 2 == 0:
+                c.setFillColor(grey_bg); c.rect(45, y-6, W-90, RE, fill=1, stroke=0)
+            c.setFillColor(colors.black)
+            c.drawString(55, y+4, label)
+            c.setFont("Helvetica-Bold", 10); c.drawString(295, y+4, f"{val} kcal")
+            c.setFont("Helvetica", 9.5);     c.drawString(390, y+4, toel)
+            y -= RE
+
+    footer()
+
+    # ════════════════════════════════════════════
+    #  PAGINA 3  –  VO2max + Profiel + Coach
+    # ════════════════════════════════════════════
+    c.showPage()
+    draw_header("INSPANNINGSTEST", "VO₂max Analyse & Coach Rapport", 3, 3)
+    y = H - 130
+
+    # Atleet profiel
+    y = section("ATLETENPROFIEL", y)
+    y -= 14
+    RP = 24  # rij-hoogte profiel
+    profiel = [
+        ("Naam",               naam),
+        ("Geboortedatum",      geboortedatum.strftime("%d/%m/%Y") if hasattr(geboortedatum, 'strftime') else str(geboortedatum)),
+        ("Leeftijd",           f"{leeft} jaar"),
+        ("Geslacht",           gesl),
+        ("Sport / Discipline", sport if sport else "–"),
+        ("Trainingsdoelen",    doelen if doelen else "–"),
+        ("Testdatum",          str(datum)),
+        ("Gewicht / Lengte",   f"{gew} kg  /  {leng} cm"),
+        ("BMI",                f"{bmi:.1f} kg/m²"),
+    ]
+    for pi, (lbl, val) in enumerate(profiel):
+        if pi % 2 == 0:
+            c.setFillColor(grey_bg); c.rect(45, y-6, W-90, RP, fill=1, stroke=0)
+        c.setFillColor(blue); c.setFont("Helvetica-Bold", 10); c.drawString(55, y+4, lbl)
+        c.setFillColor(navy); c.setFont("Helvetica", 10);      c.drawString(245, y+4, val)
+        y -= RP
+
+    y -= 18
+    y = section("VO₂MAX ANALYSE", y)
+    y -= 14
+
+    # VO2 uitleg blok
+    c.setFillColor(light); c.roundRect(45, y-80, W-90, 88, 7, fill=1, stroke=0)
+    c.setFillColor(grey_ln); c.roundRect(45, y-80, W-90, 88, 7, fill=0, stroke=1)
+    c.setFillColor(navy); c.setFont("Helvetica-Bold", 11)
+    c.drawString(58, y+2, "Berekende VO₂max waarden:")
+    c.setFont("Helvetica", 10.5); c.setFillColor(colors.HexColor("#374151"))
+    c.drawString(58, y-16, f"Storer et al. (fietsergometer):        {vo2_storer} ml/kg/min")
+    c.drawString(58, y-34, f"Legge & Banister (vermogen/gewicht):   {vo2_lb} ml/kg/min")
+    c.setFont("Helvetica-Bold", 11); c.setFillColor(blue)
+    c.drawString(58, y-54, f"Gemiddelde (aanbevolen waarde):        {vo2_gem} ml/kg/min")
+    c.setFillColor(colors.HexColor("#94A3B8")); c.setFont("Helvetica", 8.5)
+    c.drawString(58, y-72, "Formules gebaseerd op maximaal vermogen op fietsergometer (Wmax) en lichaamsgewicht.")
+    y -= 98
+
+    # VO2 normtabel
+    y = section("VO₂MAX REFERENTIEWAARDEN", y)
+    y -= 14
+
+    if gesl == "Man":
+        normen = [
+            ("< 30 jaar",  "<35", "35-42", "43-52", "53-60", ">60"),
+            ("30-39 jaar", "<33", "33-41", "42-49", "50-57", ">57"),
+            ("40-49 jaar", "<31", "31-38", "39-46", "47-54", ">54"),
+            ("50-59 jaar", "<26", "26-34", "35-42", "43-50", ">50"),
+            ("> 60 jaar",  "<20", "20-27", "28-35", "36-44", ">44"),
+        ]
+    else:
+        normen = [
+            ("< 30 jaar",  "<24", "24-30", "31-37", "38-48", ">48"),
+            ("30-39 jaar", "<22", "22-29", "30-36", "37-44", ">44"),
+            ("40-49 jaar", "<20", "20-26", "27-33", "34-41", ">41"),
+            ("50-59 jaar", "<18", "18-23", "24-30", "31-38", ">38"),
+            ("> 60 jaar",  "<16", "16-21", "22-27", "28-35", ">35"),
+        ]
+
+    RN = 22  # rij-hoogte normtabel
+    nrm_hdrs = ["Leeftijd", "Slecht", "Matig", "Gemiddeld", "Goed", "Uitstekend"]
+    nrm_cols = [55, 150, 225, 308, 392, 470]
+    nrm_clrs = [navy, colors.HexColor("#EF4444"), colors.HexColor("#F97316"),
+                colors.HexColor("#EAB308"), colors.HexColor("#22C55E"), colors.HexColor("#10B981")]
+    c.setFont("Helvetica-Bold", 9.5)
+    for cx, hdr, cl in zip(nrm_cols, nrm_hdrs, nrm_clrs):
+        c.setFillColor(cl); c.drawString(cx, y, hdr)
+    y -= 8; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= RN
+
+    c.setFont("Helvetica", 9.5)
+    for ni, rij in enumerate(normen):
+        if ni % 2 == 0:
+            c.setFillColor(grey_bg); c.rect(45, y-5, W-90, RN, fill=1, stroke=0)
+        for cx, val in zip(nrm_cols, rij):
+            c.setFillColor(navy); c.drawString(cx, y+4, val)
+        y -= RN
+
+    c.setFillColor(colors.HexColor("#64748B")); c.setFont("Helvetica-Oblique", 8.5)
+    c.drawString(55, y-8, f"Gemeten VO₂max: {vo2_gem} ml/kg/min  |  Atleet: {naam}, {leeft} jaar, {gesl}")
+    y -= 28
+
+    # Coach opmerkingen
+    y = section("OPMERKINGEN & ADVIES COACH", y)
+    y -= 14
+    tekst = opmerkingen.strip() if opmerkingen and opmerkingen.strip() else "Geen extra opmerkingen geformuleerd."
+    c.setFont("Helvetica", 10.5); c.setFillColor(navy)
+    for line in tekst.split('\n'):
+        while len(line) > 85:
+            c.drawString(55, y, line[:85])
+            y -= 18; line = line[85:]
+        c.drawString(55, y, line); y -= 18
+        if y < 95:
+            break
+
+    # Handtekeningen
+    y = max(y - 32, 75)
+    c.setStrokeColor(grey_ln); c.setLineWidth(0.8)
+    c.line(55, y, 245, y); c.line(320, y, 515, y)
+    c.setFillColor(colors.HexColor("#94A3B8")); c.setFont("Helvetica", 9)
+    c.drawString(55, y-16, "Handtekening coach")
+    c.drawString(320, y-16, "Handtekening atleet")
+
+    footer()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
+def genereer_vergelijking_pdf(naam, fig, rows):
+    if not REPORTLAB_OK:
+        return None
+    buffer = BytesIO()
+    c = rl_canvas.Canvas(buffer, pagesize=A4)
+    W, H = A4
+    navy = colors.HexColor("#0F172A"); blue = colors.HexColor("#1E88E5")
+    grey_bg = colors.HexColor("#F8FAFC"); grey_ln = colors.HexColor("#CBD5E1")
+
+    c.setFillColor(navy); c.rect(0, H-100, W, 100, fill=1, stroke=0)
+    c.setFillColor(blue); c.rect(0, H-103, W, 3, fill=1, stroke=0)
+    c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 22)
+    c.drawString(45, H-50, "VERGELIJKINGSRAPPORT")
+    c.setFont("Helvetica", 10); c.setFillColor(colors.HexColor("#93C5FD"))
+    c.drawString(45, H-68, f"Atleet: {naam}  |  {date.today().strftime('%d %B %Y')}  |  LacTan+")
+
+    img_buf = BytesIO()
+    fig.savefig(img_buf, format='png', dpi=200, bbox_inches='tight'); img_buf.seek(0)
+    c.drawImage(ImageReader(img_buf), 45, 420, width=W-90, height=250)
+
+    y = 395
+    c.setFillColor(blue); c.rect(45, y, W-90, 20, fill=1, stroke=0)
+    c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 10)
+    c.drawString(50, y+5, "DREMPELANALYSE OVERZICHT"); y -= 8
+
+    hdrs = ["Atleet", "Datum", "LT1 (W)", "LT2 (W)", "Max Lac"]
+    cols = [55, 180, 300, 380, 460]
+    c.setFont("Helvetica-Bold", 8.5); c.setFillColor(navy)
+    for cx, hdr in zip(cols, hdrs): c.drawString(cx, y, hdr)
+    y -= 4; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= 14
+
+    c.setFont("Helvetica", 9)
+    for ri, r in enumerate(rows):
+        if ri % 2 == 0:
+            c.setFillColor(grey_bg); c.rect(45, y-3, W-90, 14, fill=1, stroke=0)
+        c.setFillColor(colors.black)
+        for cx, val in zip(cols, [r['Atleet'], r['Datum'], f"{r['LT1 (W)']} W", f"{r['LT2 (W)']} W", r['Max Lac']]):
+            c.drawString(cx, y+1, str(val))
+        y -= 16
+
+    c.setFillColor(grey_ln); c.rect(0, 0, W, 25, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#64748B")); c.setFont("Helvetica", 7.5)
+    c.drawString(45, 8, f"LacTan+ Vergelijkingsrapport  |  {date.today().strftime('%d-%m-%Y')}  |  Vertrouwelijk")
+    c.save(); buffer.seek(0)
+    return buffer
+
+
+# ─────────────────────────────────────────────
+#  CSS
+# ─────────────────────────────────────────────
+st.markdown("""
+<style>
+.block-container{padding-top:1rem;}
+.biometry-box{background:linear-gradient(135deg,#EFF6FF,#DBEAFE);padding:14px 20px;
+    border-radius:10px;border-left:5px solid #1E88E5;margin-bottom:16px;font-size:14px;}
+.zone-card{padding:8px 14px;margin-bottom:4px;border-radius:7px;font-size:13.5px;
+    border-left:5px solid #0F172A;font-weight:500;}
+.energie-box{background:#F0FDF4;padding:14px 18px;border-radius:10px;
+    border-left:5px solid #16A34A;margin-top:12px;font-size:13.5px;}
+h1{color:#0F172A !important;}
+</style>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────
+#  SIDEBAR
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("# 🚴 LacTan+")
+    if st.button("Uitloggen", use_container_width=True):
+        st.session_state.logged_in = False
+        st.rerun()
+    st.divider()
+    st.subheader("Analyse instellingen")
+    pal   = st.select_slider("PAL factor", [1.2, 1.4, 1.6, 1.8, 2.0], value=1.4)
+    m_lt1 = st.radio("LT1 methode", ["Baseline + 1.0", "Handmatig"])
+    m_lt2 = st.radio("LT2 methode", ["Modified Dmax", "Handmatig"])
+    st.divider()
+
+    st.subheader("Trainingszones")
+    if "zones" not in st.session_state:
+        st.session_state.zones = [
+            {"Zone":"Z1","Naam":"Herstel",  "W_van":0,  "W_tot":55, "HR_van":0,  "HR_tot":65, "Borg":"6-9",   "color":"#E8F5E9"},
+            {"Zone":"Z2","Naam":"Duur",     "W_van":56, "W_tot":75, "HR_van":66, "HR_tot":80, "Borg":"10-12", "color":"#C8E6C9"},
+            {"Zone":"Z3","Naam":"Tempo",    "W_van":76, "W_tot":90, "HR_van":81, "HR_tot":87, "Borg":"13-14", "color":"#FFF9C4"},
+            {"Zone":"Z4","Naam":"Drempel",  "W_van":91, "W_tot":105,"HR_van":88, "HR_tot":94, "Borg":"15-16", "color":"#FFE0B2"},
+            {"Zone":"Z5","Naam":"VO2max",   "W_van":106,"W_tot":150,"HR_van":95, "HR_tot":100,"Borg":"17-20", "color":"#FFCDD2"},
+        ]
+
+    to_delete = []
+    for idx, z in enumerate(st.session_state.zones):
+        with st.expander(f"{z['Zone']} – {z['Naam']}", expanded=False):
+            z["Zone"]  = st.text_input("Code",    z["Zone"],  key=f"zc_{idx}")
+            z["Naam"]  = st.text_input("Naam",    z["Naam"],  key=f"zn_{idx}")
+            z["color"] = st.color_picker("Kleur", z["color"], key=f"zk_{idx}")
+            c1s, c2s   = st.columns(2)
+            z["W_van"]  = c1s.number_input("W% van",  0,300,int(z["W_van"]),  key=f"wv_{idx}")
+            z["W_tot"]  = c2s.number_input("W% tot",  0,300,int(z["W_tot"]),  key=f"wt_{idx}")
+            z["HR_van"] = c1s.number_input("HR% van", 0,100,int(z["HR_van"]), key=f"hv_{idx}")
+            z["HR_tot"] = c2s.number_input("HR% tot", 0,100,int(z["HR_tot"]), key=f"ht_{idx}")
+            z["Borg"]   = st.text_input("Borg",    z["Borg"],  key=f"bg_{idx}")
+            if st.button("Verwijder zone", key=f"del_{idx}"):
+                to_delete.append(idx)
+
+    for i in sorted(to_delete, reverse=True):
+        st.session_state.zones.pop(i)
+    if to_delete:
+        st.rerun()
+
+    st.divider()
+    with st.expander("Nieuwe zone toevoegen"):
+        nz_code  = st.text_input("Code",    "Z6",      key="nz_c")
+        nz_naam  = st.text_input("Naam",    "Sprint",  key="nz_n")
+        nz_color = st.color_picker("Kleur", "#F8BBD9", key="nz_k")
+        c1n, c2n = st.columns(2)
+        nz_wv    = c1n.number_input("W% van",  0,300,151, key="nz_wv")
+        nz_wt    = c2n.number_input("W% tot",  0,300,200, key="nz_wt")
+        nz_hv    = c1n.number_input("HR% van", 0,100,95,  key="nz_hv")
+        nz_ht    = c2n.number_input("HR% tot", 0,100,100, key="nz_ht")
+        nz_borg  = st.text_input("Borg",    "19-20",   key="nz_b")
+        if st.button("Zone toevoegen", key="nz_add"):
+            st.session_state.zones.append({
+                "Zone":nz_code,"Naam":nz_naam,"color":nz_color,
+                "W_van":nz_wv,"W_tot":nz_wt,"HR_van":nz_hv,"HR_tot":nz_ht,"Borg":nz_borg
+            })
+            st.rerun()
+
+# ─────────────────────────────────────────────
+#  HOOFDPAGINA  –  INVOER
+# ─────────────────────────────────────────────
+st.title("Inspanningstest")
+st.markdown("---")
+
+# Rij 1: persoonlijke gegevens
+st.markdown("#### Persoonlijke gegevens")
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    n_atl  = st.text_input("Naam atleet", "Voornaam Achternaam")
+    gebdat = st.date_input("Geboortedatum", value=date(1990, 1, 1),
+                           min_value=date(1930,1,1), max_value=date.today())
+with c2:
+    gew    = st.number_input("Gewicht (kg)", 30.0, 150.0, 75.0)
+    leng   = st.number_input("Lengte (cm)", 120, 220, 180)
+with c3:
+    gesl   = st.selectbox("Geslacht", ["Man", "Vrouw"])
+    sport  = st.text_input("Sport / Discipline", "Wielrennen")
+with c4:
+    test_d = st.date_input("Testdatum", date.today())
+    logo_f = st.file_uploader("Logo (optioneel)", type=["png","jpg","jpeg"])
+
+doelen = st.text_input("Trainingsdoelen", placeholder="bijv. Sportief, Gewichtsreductie, Competitie...")
+
+st.markdown("#### Testgegevens invoer")
+df_in = st.data_editor(
+    pd.DataFrame({
+        "Watt": [100., 150., 200., 250., 300., 350.],
+        "HR":   [110., 125., 140., 155., 170., 185.],
+        "Lac":  [1.0,  1.2,  2.2,  4.5,  9.5, 12.0],
+        "Borg": [8.,   10.,  12.,  14.,  16.,  18.]
+    }),
+    num_rows="dynamic",
+    use_container_width=True,
+    key="data_editor"
+)
+
+c_df = df_in.dropna(subset=["Watt", "HR", "Lac"])
+
+if len(c_df) < 3:
+    st.info("Voer minimaal 3 meetpunten in om de analyse te starten.")
+    st.stop()
+
+x_v   = c_df["Watt"].values.astype(float)
+hr_v  = c_df["HR"].values.astype(float)
+lac_v = c_df["Lac"].values.astype(float)
+max_vals = {"Watt": int(x_v.max()), "HR": int(hr_v.max()), "Lac": float(lac_v.max())}
+
+# Leeftijd uit geboortedatum
+leeft = bereken_leeftijd(gebdat)
+
+# Handmatige LT schuivers
+lt1_hand = lt2_hand = None
+if m_lt1 == "Handmatig":
+    lt1_hand = st.sidebar.slider("LT1 (W)", int(x_v.min()), int(x_v.max()), int(x_v.mean()))
+if m_lt2 == "Handmatig":
+    lt2_hand = st.sidebar.slider("LT2 (W)", int(x_v.min()), int(x_v.max()), int(x_v.mean()))
+
+lt1_w, lt2_w, xf, yf = bereken_drempels(x_v, lac_v, m_lt1, m_lt2, lt1_hand, lt2_hand)
+lt1_hr = interp_val(lt1_w, x_v, hr_v)
+lt2_hr = interp_val(lt2_w, x_v, hr_v)
+
+# Biometrie & energie
+bmi  = gew / ((leng / 100) ** 2)
+bmr  = (10*gew) + (6.25*leng) - (5*leeft) + (5 if gesl == "Man" else -161)
+tdee = bmr * pal
+vo2_gem, vo2_storer, vo2_lb = bereken_vo2max(x_v.max(), gew, hr_v.max())
+
+# Resultatenbox
+st.markdown(
+    f'<div class="biometry-box">'
+    f'<b>LT1:</b> {int(lt1_w)} W @ {int(lt1_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
+    f'<b>LT2:</b> {int(lt2_w)} W @ {int(lt2_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
+    f'<b>Max:</b> {max_vals["Watt"]} W &middot; {max_vals["HR"]} bpm &middot; {max_vals["Lac"]:.1f} mmol/L'
+    f'<br><b>VO₂max:</b> {vo2_gem} ml/kg/min &nbsp;(Storer: {vo2_storer} | Legge: {vo2_lb})'
+    f'&nbsp;&nbsp;|&nbsp;&nbsp; <b>BMI:</b> {bmi:.1f} &nbsp;&nbsp;|&nbsp;&nbsp; <b>TDEE:</b> {int(tdee)} kcal/dag'
+    f'</div>', unsafe_allow_html=True
+)
+
+# Energieoverzicht
+st.markdown(
+    f'<div class="energie-box">'
+    f'<b>Energiebehoefte:</b> &nbsp; BMR: <b>{int(bmr)} kcal</b> &nbsp;|&nbsp; '
+    f'TDEE (PAL {pal}): <b>{int(tdee)} kcal</b> &nbsp;|&nbsp; '
+    f'Z1-Z2 (lage intensiteit): <b>{int(tdee*0.60)} kcal</b> &nbsp;|&nbsp; '
+    f'Z3-Z4 (hoge intensiteit): <b>{int(tdee*0.28)} kcal</b> &nbsp;|&nbsp; '
+    f'Z5 (max): <b>{int(tdee*0.12)} kcal</b>'
+    f'</div>', unsafe_allow_html=True
+)
+
+# ─────────────────────────────────────────────
+#  GRAFIEK
+# ─────────────────────────────────────────────
+fig, ax1 = plt.subplots(figsize=(11, 5))
+ax2 = ax1.twinx()
+
+for z in st.session_state.zones:
+    ax1.axvspan(lt2_w * z["W_van"] / 100, lt2_w * z["W_tot"] / 100,
+                color=z["color"], alpha=0.5)
+
+ax1.plot(xf, yf, color='#1E88E5', linewidth=3)
+ax1.scatter(x_v, lac_v, color='#0D47A1', s=70, zorder=5)
+ax2.plot(x_v, hr_v, color='#e53935', linestyle='--', linewidth=2)
+ax2.scatter(x_v, hr_v, color='#e53935', marker='x', s=50)
+
+ax1.axvline(lt1_w, color='#2e7d32', linestyle='--', linewidth=1.5)
+ax1.text(lt1_w+2, yf.max()*0.35, 'LT1', color='#2e7d32', fontweight='bold',
+         bbox=dict(facecolor='white', alpha=0.85, edgecolor='#2e7d32', boxstyle='round,pad=0.3'))
+ax1.axvline(lt2_w, color='#c62828', linestyle='--', linewidth=1.5)
+ax1.text(lt2_w+2, yf.max()*0.35, 'LT2', color='#c62828', fontweight='bold',
+         bbox=dict(facecolor='white', alpha=0.85, edgecolor='#c62828', boxstyle='round,pad=0.3'))
+
+patches = [mpatches.Patch(color=z["color"], label=f"{z['Zone']} – {z['Naam']}")
+           for z in st.session_state.zones]
+ax1.legend(handles=patches, loc='upper left', fontsize=8, framealpha=0.9)
+ax1.set_xlabel("Vermogen (Watt)", fontsize=11)
+ax1.set_ylabel("Lactaat (mmol/L)", color='#1E88E5', fontsize=11)
+ax2.set_ylabel("Hartslag (bpm)", color='#e53935', fontsize=11)
+ax1.set_xlim(x_v.min(), x_v.max())
+ax1.set_title("Lactaat & Hartslagcurve – LacTan+", fontsize=13, fontweight='bold', color='#0F172A')
+ax1.grid(True, alpha=0.2)
+fig.tight_layout()
+st.pyplot(fig)
+
+# ─────────────────────────────────────────────
+#  TRAININGSZONES
+# ─────────────────────────────────────────────
+st.markdown("#### Trainingszones")
+z_tab = []
+for z in st.session_state.zones:
+    w_van = int(lt2_w * z["W_van"] / 100)
+    w_tot = int(lt2_w * z["W_tot"] / 100)
+    h_van = int(hr_v.max() * z["HR_van"] / 100)
+    h_tot = int(hr_v.max() * z["HR_tot"] / 100)
+    z_tab.append({
+        "Zone": z["Zone"], "Naam": z["Naam"],
+        "Watt": f"{w_van}–{w_tot} W",
+        "Hartslag": f"{h_van}–{h_tot} bpm",
+        "Borg": z["Borg"], "color": z["color"]
+    })
+    st.markdown(
+        f'<div class="zone-card" style="background:{z["color"]};">'
+        f'<b>{z["Zone"]} – {z["Naam"]}</b> &nbsp;&nbsp;'
+        f'⚡ {w_van}–{w_tot} W &nbsp;&nbsp;'
+        f'❤️ {h_van}–{h_tot} bpm &nbsp;&nbsp;'
+        f'Borg: {z["Borg"]}'
+        f'</div>', unsafe_allow_html=True
+    )
+
+# ─────────────────────────────────────────────
+#  OPMERKINGEN + PDF
+# ─────────────────────────────────────────────
+st.markdown("#### Opmerkingen coach")
+opmerkingen = st.text_area("Observaties, aanbevelingen, omstandigheden:",
+                            placeholder="Typ hier de observaties van de coach...", height=100)
+
+st.markdown("#### Rapport genereren")
+if not REPORTLAB_OK:
+    st.warning("ReportLab niet geïnstalleerd. Voer uit: `pip install reportlab`")
+else:
+    if st.button("Genereer professioneel PDF-rapport", type="primary", use_container_width=True):
+        with st.spinner("PDF wordt aangemaakt..."):
+            pdf = genereer_pdf(
+                naam=n_atl, geboortedatum=gebdat, sport=sport, doelen=doelen,
+                datum=test_d, gew=gew, leng=leng, leeft=leeft, gesl=gesl,
+                bmi=bmi, vo2_gem=vo2_gem, vo2_storer=vo2_storer, vo2_lb=vo2_lb,
+                tdee=tdee, bmr=bmr,
+                lt1_w=lt1_w, lt2_w=lt2_w, max_vals=max_vals,
+                fig=fig, zones_lijst=st.session_state.zones,
+                test_df=c_df, logo_file=logo_f, opmerkingen=opmerkingen
+            )
+        if pdf:
+            st.download_button(
+                "Download PDF Rapport",
+                data=pdf,
+                file_name=f"Inspanningstest_{n_atl}_{test_d}.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
+
+# ─────────────────────────────────────────────
+#  VERGELIJKING & DATABASE
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.markdown("#### Vergelijken lactaatanalyses")
+
+col_save, col_space = st.columns([1, 3])
+with col_save:
+    if st.button("💾 Sla huidige meting op", use_container_width=True):
+        save_test(n_atl, test_d,
+                  c_df['Watt'].tolist(),
+                  c_df['Lac'].tolist(),
+                  c_df['HR'].tolist())
+        st.success("Meting opgeslagen!")
+        st.rerun()
+
+db_data = load_tests()
+
+if db_data.empty:
+    st.info("Nog geen metingen opgeslagen. Sla een meting op om te vergelijken.")
+else:
+    # Database beheer – verwijderen
+    with st.expander("🗑️ Metingen beheren / verwijderen"):
+        for _, row in db_data.iterrows():
+            col_a, col_b = st.columns([4, 1])
+            col_a.write(f"**{row['naam']}** – {row['datum']}  (ID: {row['id']})")
+            if col_b.button("Verwijder", key=f"rm_{row['id']}"):
+                delete_test(row['id'])
+                st.success(f"Meting van {row['naam']} ({row['datum']}) verwijderd.")
+                st.rerun()
+
+    opties = {i: f"{row['naam']} ({row['datum']})" for i, row in db_data.iterrows()}
+    keuze  = st.multiselect("Selecteer testen voor vergelijking:",
+                             list(opties.keys()),
+                             format_func=lambda x: opties[x])
+
+    if keuze:
+        fig_v, ax_v = plt.subplots(figsize=(10, 5))
+        tabel_rows  = []
+
+        for i in keuze:
+            r  = db_data.iloc[i]
+            xw = np.array([float(v) for v in r['watt'].split(',')])
+            yl = np.array([float(v) for v in r['lac'].split(',')])
+            xfine = np.linspace(xw.min(), xw.max(), 500)
+            yfine = PchipInterpolator(xw, yl)(xfine)
+
+            i1  = np.where(yfine >= (float(np.mean(yl[:2])) + 1.0))[0]
+            lt1_v = int(xfine[i1[0]]) if len(i1) > 0 else int(xw[0])
+            i2  = np.where(yfine >= (float(np.mean(yl[:2])) + 0.4))[0]
+            s_b = i2[0] if len(i2) > 0 else 0
+            dist = np.abs(
+                (yfine[-1]-yfine[s_b])*xfine[s_b:] -
+                (xfine[-1]-xfine[s_b])*yfine[s_b:] +
+                xfine[-1]*yfine[s_b] - yfine[-1]*xfine[s_b]
+            )
+            lt2_v = int(xfine[s_b + np.argmax(dist)])
+
+            line, = ax_v.plot(xfine, yfine,
+                              label=f"{r['naam']} ({r['datum']})", linewidth=2.5)
+            col = line.get_color()
+            ax_v.scatter([lt1_v, lt2_v],
+                         [interp_val(lt1_v, xw, yl), interp_val(lt2_v, xw, yl)],
+                         color=col, edgecolors='white', s=80, zorder=5)
+            tabel_rows.append({
+                "Atleet": r['naam'], "Datum": r['datum'],
+                "LT1 (W)": lt1_v, "LT2 (W)": lt2_v,
+                "Max Lac": f"{yl.max():.1f}"
+            })
+
+        ax_v.set_title("Vergelijkende Lactaatcurve – LacTan+", fontsize=13,
+                       fontweight='bold', color='#0F172A')
+        ax_v.set_xlabel("Vermogen (Watt)"); ax_v.set_ylabel("Lactaat (mmol/L)")
+        ax_v.legend(); ax_v.grid(True, alpha=0.3)
+        fig_v.tight_layout()
+        st.pyplot(fig_v)
+
+        st.markdown("##### Vergelijkingstabel")
+        st.table(pd.DataFrame(tabel_rows))
+
+        if REPORTLAB_OK:
+            pdf_verg = genereer_vergelijking_pdf(n_atl, fig_v, tabel_rows)
+            if pdf_verg:
+                st.download_button(
+                    "Download Vergelijking PDF",
+                    data=pdf_verg,
+                    file_name=f"LacTan_Vergelijking_{n_atl}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
