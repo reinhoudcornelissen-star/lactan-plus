@@ -8,7 +8,12 @@ import matplotlib.patches as mpatches
 from scipy.interpolate import PchipInterpolator
 from datetime import date, datetime
 from io import BytesIO
-import sqlite3
+
+try:
+    from supabase import create_client, Client
+    SUPABASE_OK = True
+except ImportError:
+    SUPABASE_OK = False
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -127,9 +132,19 @@ if not check_login():
     st.stop()
 
 # ─────────────────────────────────────────────
-#  DATABASE (session_state - werkt op Streamlit Cloud)
+#  DATABASE (Supabase met session_state fallback)
 # ─────────────────────────────────────────────
+def get_supabase():
+    """Maak Supabase client aan via Streamlit secrets."""
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key) if SUPABASE_OK else None
+    except Exception:
+        return None
+
 def init_db():
+    """Initialiseer lokale fallback opslag."""
     if "db_tests" not in st.session_state:
         st.session_state.db_tests = []
     if "db_next_id" not in st.session_state:
@@ -137,25 +152,62 @@ def init_db():
 
 def save_test(naam, datum, watt_list, lac_list, hr_list):
     init_db()
-    record = {
+    watt_str = ",".join([str(float(v)) for v in watt_list])
+    lac_str  = ",".join([str(float(v)) for v in lac_list])
+    hr_str   = ",".join([str(float(v)) for v in hr_list])
+
+    sb = get_supabase()
+    if sb:
+        try:
+            sb.table("tests").insert({
+                "naam":  naam,
+                "datum": str(datum),
+                "watt":  watt_str,
+                "lac":   lac_str,
+                "hr":    hr_str,
+            }).execute()
+            return
+        except Exception as e:
+            st.warning(f"Supabase opslaan mislukt, lokaal opgeslagen: {e}")
+
+    # Fallback: session_state
+    st.session_state.db_tests.insert(0, {
         "id":    st.session_state.db_next_id,
         "naam":  naam,
         "datum": str(datum),
-        "watt":  ",".join([str(float(v)) for v in watt_list]),
-        "lac":   ",".join([str(float(v)) for v in lac_list]),
-        "hr":    ",".join([str(float(v)) for v in hr_list]),
-    }
-    st.session_state.db_tests.insert(0, record)
+        "watt":  watt_str,
+        "lac":   lac_str,
+        "hr":    hr_str,
+    })
     st.session_state.db_next_id += 1
 
 def load_tests():
     init_db()
+    sb = get_supabase()
+    if sb:
+        try:
+            res = sb.table("tests").select("*").order("id", desc=True).execute()
+            if res.data:
+                return pd.DataFrame(res.data)
+        except Exception:
+            pass
+
+    # Fallback: session_state
     if not st.session_state.db_tests:
         return pd.DataFrame()
     return pd.DataFrame(st.session_state.db_tests)
 
 def delete_test(test_id):
     init_db()
+    sb = get_supabase()
+    if sb:
+        try:
+            sb.table("tests").delete().eq("id", int(test_id)).execute()
+            return
+        except Exception:
+            pass
+
+    # Fallback: session_state
     st.session_state.db_tests = [
         r for r in st.session_state.db_tests if r["id"] != int(test_id)
     ]
@@ -699,15 +751,17 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     return buffer
 
 
-def genereer_vergelijking_pdf(naam, fig, rows):
+def genereer_vergelijking_pdf(naam, fig, rows, opmerkingen=""):
     if not REPORTLAB_OK:
         return None
     buffer = BytesIO()
     c = rl_canvas.Canvas(buffer, pagesize=A4)
     W, H = A4
-    navy = colors.HexColor("#0F172A"); blue = colors.HexColor("#1E88E5")
+    navy    = colors.HexColor("#0F172A"); blue = colors.HexColor("#1E88E5")
     grey_bg = colors.HexColor("#F8FAFC"); grey_ln = colors.HexColor("#CBD5E1")
+    light   = colors.HexColor("#EFF6FF")
 
+    # Header
     c.setFillColor(navy); c.rect(0, H-100, W, 100, fill=1, stroke=0)
     c.setFillColor(blue); c.rect(0, H-103, W, 3, fill=1, stroke=0)
     c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 22)
@@ -715,33 +769,63 @@ def genereer_vergelijking_pdf(naam, fig, rows):
     c.setFont("Helvetica", 10); c.setFillColor(colors.HexColor("#93C5FD"))
     c.drawString(45, H-68, f"Atleet: {naam}  |  {date.today().strftime('%d %B %Y')}  |  LacTan+")
 
+    # Grafiek
     img_buf = BytesIO()
     fig.savefig(img_buf, format='png', dpi=200, bbox_inches='tight'); img_buf.seek(0)
-    c.drawImage(ImageReader(img_buf), 45, 420, width=W-90, height=250)
+    c.drawImage(ImageReader(img_buf), 45, 400, width=W-90, height=260)
 
-    y = 395
-    c.setFillColor(blue); c.rect(45, y, W-90, 20, fill=1, stroke=0)
+    # Drempelanalyse tabel
+    y = 378
+    c.setFillColor(blue); c.rect(45, y, W-90, 22, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#93C5FD")); c.rect(45, y, 5, 22, fill=1, stroke=0)
     c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 10)
-    c.drawString(50, y+5, "DREMPELANALYSE OVERZICHT"); y -= 8
+    c.drawString(58, y+6, "DREMPELANALYSE OVERZICHT")
+    y -= 14
 
     hdrs = ["Atleet", "Datum", "LT1 (W)", "LT2 (W)", "Max Lac"]
-    cols = [55, 180, 300, 380, 460]
-    c.setFont("Helvetica-Bold", 8.5); c.setFillColor(navy)
+    cols = [55, 180, 305, 385, 462]
+    c.setFont("Helvetica-Bold", 9); c.setFillColor(navy)
     for cx, hdr in zip(cols, hdrs): c.drawString(cx, y, hdr)
-    y -= 4; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= 14
+    y -= 6; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= 16
 
-    c.setFont("Helvetica", 9)
+    c.setFont("Helvetica", 9.5)
     for ri, r in enumerate(rows):
         if ri % 2 == 0:
-            c.setFillColor(grey_bg); c.rect(45, y-3, W-90, 14, fill=1, stroke=0)
+            c.setFillColor(grey_bg); c.rect(45, y-4, W-90, 16, fill=1, stroke=0)
         c.setFillColor(colors.black)
-        for cx, val in zip(cols, [r['Atleet'], r['Datum'], f"{r['LT1 (W)']} W", f"{r['LT2 (W)']} W", r['Max Lac']]):
-            c.drawString(cx, y+1, str(val))
+        for cx, val in zip(cols, [r['Atleet'], r['Datum'],
+                                   f"{r['LT1 (W)']} W", f"{r['LT2 (W)']} W", r['Max Lac']]):
+            c.drawString(cx, y+2, str(val))
+        y -= 18
+
+    # Opmerkingen sectie
+    y -= 10
+    if y > 80:
+        c.setFillColor(blue); c.rect(45, y, W-90, 22, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor("#93C5FD")); c.rect(45, y, 5, 22, fill=1, stroke=0)
+        c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 10)
+        c.drawString(58, y+6, "OPMERKINGEN & ADVIES COACH")
         y -= 16
 
+        tekst = opmerkingen.strip() if opmerkingen and opmerkingen.strip() else "Geen opmerkingen."
+        vak_h = max(60, min(y - 40, 160))
+        c.setFillColor(light); c.roundRect(45, y - vak_h, W-90, vak_h, 5, fill=1, stroke=0)
+        c.setFillColor(grey_ln); c.roundRect(45, y - vak_h, W-90, vak_h, 5, fill=0, stroke=1)
+
+        ty = y - 14
+        c.setFont("Helvetica", 10); c.setFillColor(navy)
+        for line in tekst.split('\n'):
+            while len(line) > 85:
+                c.drawString(58, ty, line[:85]); ty -= 16; line = line[85:]
+            c.drawString(58, ty, line); ty -= 16
+            if ty < y - vak_h + 8:
+                break
+
+    # Footer
     c.setFillColor(grey_ln); c.rect(0, 0, W, 25, fill=1, stroke=0)
     c.setFillColor(colors.HexColor("#64748B")); c.setFont("Helvetica", 7.5)
     c.drawString(45, 8, f"LacTan+ Vergelijkingsrapport  |  {date.today().strftime('%d-%m-%Y')}  |  Vertrouwelijk")
+    c.drawRightString(W-45, 8, f"© {date.today().year} LacTan+")
     c.save(); buffer.seek(0)
     return buffer
 
@@ -768,6 +852,7 @@ h1{color:#0F172A !important;}
 with st.sidebar:
     st.markdown("# 🚴 LacTan+")
     if st.button("Uitloggen", use_container_width=True):
+        # Bewaar database bij uitloggen — NIET wissen
         st.session_state.logged_in = False
         st.rerun()
     st.divider()
@@ -1092,8 +1177,13 @@ else:
         st.markdown("##### Vergelijkingstabel")
         st.table(pd.DataFrame(tabel_rows))
 
+        st.markdown("##### Opmerkingen coach (vergelijking)")
+        opm_verg = st.text_area("Observaties over de vergelijking:",
+                                 placeholder="Beschrijf de evolutie, verbeteringen, aandachtspunten...",
+                                 height=120, key="opm_vergelijking")
+
         if REPORTLAB_OK:
-            pdf_verg = genereer_vergelijking_pdf(n_atl, fig_v, tabel_rows)
+            pdf_verg = genereer_vergelijking_pdf(n_atl, fig_v, tabel_rows, opm_verg)
             if pdf_verg:
                 st.download_button(
                     "Download Vergelijking PDF",
