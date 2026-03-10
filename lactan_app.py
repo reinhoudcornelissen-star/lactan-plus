@@ -32,7 +32,12 @@ st.set_page_config(page_title="LacTan+", page_icon="🚴", layout="wide")
 # ─────────────────────────────────────────────
 #  LOGIN
 # ─────────────────────────────────────────────
-USERS = {"sportlab": "welkom_sportlab", "admin": "lactan2024"}
+# ─────────────────────────────────────────────
+# Laad gebruikers uit Streamlit Secrets of gebruik standaard
+try:
+    USERS = dict(st.secrets["users"])
+except Exception:
+    USERS = {"sportlab": "welkom_sportlab", "admin": "lactan2024"}
 
 def check_login():
     if "logged_in" not in st.session_state:
@@ -303,7 +308,7 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
                  bmi, vo2_gem, vo2_storer, vo2_lb, tdee, bmr,
                  lt1_w, lt2_w, max_vals,
                  fig, zones_lijst, test_df,
-                 logo_file, opmerkingen, labo_naam="Sportlab Achterbos"):
+                 logo_file, opmerkingen, labo_naam="Sportlab Achterbos", is_lopen=False):
     if not REPORTLAB_OK:
         return None
 
@@ -436,17 +441,26 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
 
     y = y - pill_h - 18   # ruimte tussen de twee rijen pills
 
+    # ── Hulpfunctie tempo ──
+    def pdf_tempo(kmh):
+        if kmh <= 0: return "-"
+        sec = 3600 / kmh
+        return f"{int(sec//60)}:{int(sec%60):02d}/km"
+
     # ── Pills rij 2: fysiologie ──
     px = 45
     pill("BMI",       f"{bmi:.1f}",         "kg/m\u00b2",  px, y - pill_h); px += pw+gap
     pill("VO2max",    f"{vo2_gem}",          "ml/kg/min",  px, y - pill_h); px += pw+gap
-    pill("Max. Watt", f"{max_vals['Watt']}", "W",          px, y - pill_h); px += pw+gap
+    if is_lopen:
+        pill("Max. km/u", f"{max_vals['Watt']:.1f}", "km/u", px, y - pill_h); px += pw+gap
+    else:
+        pill("Max. Watt", f"{max_vals['Watt']}", "W",       px, y - pill_h); px += pw+gap
     pill("Max. HR",   f"{max_vals['HR']}",   "bpm",        px, y - pill_h)
 
-    y = y - pill_h - 30   # ruimte onder pills, voor sectietitel
+    y = y - pill_h - 30
 
     y = section("METABOLE DREMPELS", y)
-    y -= 16   # lucht onder sectietitel
+    y -= 16
 
     # LT1 blok
     blok_h = 58
@@ -460,10 +474,16 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     c.drawString(58, y - 14, "LT1  –  Aerobe drempel")
     c.setFillColor(navy)
     c.setFont("Helvetica-Bold", 20)
-    c.drawString(58, y - 36, f"{int(lt1_w)} W")
-    c.setFillColor(colors.HexColor("#374151"))
-    c.setFont("Helvetica", 10)
-    c.drawString(58 + 80, y - 36, f"@ {int(lt1_hr)} bpm")
+    if is_lopen:
+        c.drawString(58, y - 36, f"{lt1_w:.1f} km/u")
+        c.setFillColor(colors.HexColor("#374151"))
+        c.setFont("Helvetica", 9)
+        c.drawString(58, y - 50, f"{pdf_tempo(lt1_w)}  @  {int(lt1_hr)} bpm")
+    else:
+        c.drawString(58, y - 36, f"{int(lt1_w)} W")
+        c.setFillColor(colors.HexColor("#374151"))
+        c.setFont("Helvetica", 10)
+        c.drawString(58 + 80, y - 36, f"@ {int(lt1_hr)} bpm")
 
     # LT2 blok
     x2 = 45 + blok_w + 10
@@ -476,10 +496,16 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     c.drawString(x2 + 13, y - 14, "LT2  –  Anaerobe drempel")
     c.setFillColor(navy)
     c.setFont("Helvetica-Bold", 20)
-    c.drawString(x2 + 13, y - 36, f"{int(lt2_w)} W")
-    c.setFillColor(colors.HexColor("#374151"))
-    c.setFont("Helvetica", 10)
-    c.drawString(x2 + 13 + 80, y - 36, f"@ {int(lt2_hr)} bpm")
+    if is_lopen:
+        c.drawString(x2 + 13, y - 36, f"{lt2_w:.1f} km/u")
+        c.setFillColor(colors.HexColor("#374151"))
+        c.setFont("Helvetica", 9)
+        c.drawString(x2 + 13, y - 50, f"{pdf_tempo(lt2_w)}  @  {int(lt2_hr)} bpm")
+    else:
+        c.drawString(x2 + 13, y - 36, f"{int(lt2_w)} W")
+        c.setFillColor(colors.HexColor("#374151"))
+        c.setFont("Helvetica", 10)
+        c.drawString(x2 + 13 + 80, y - 36, f"@ {int(lt2_hr)} bpm")
 
     y = y - blok_h - 32   # ruimte onder drempelblokken
 
@@ -509,8 +535,12 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
 
     # Tabelheader zones
     c.setFillColor(navy); c.setFont("Helvetica-Bold", 9.5)
-    cols_z = [45, 95, 158, 290, 400, 478]
-    hdrs_z = ["Zone", "Naam", "Vermogen (W)", "Hartslag (bpm)", "Borg", "% LT2"]
+    if is_lopen:
+        cols_z = [45, 95, 158, 268, 378, 458]
+        hdrs_z = ["Zone", "Naam", "Snelheid (km/u)", "Tempo (min/km)", "Hartslag (bpm)", "Borg"]
+    else:
+        cols_z = [45, 95, 158, 290, 400, 478]
+        hdrs_z = ["Zone", "Naam", "Vermogen (W)", "Hartslag (bpm)", "Borg", "% LT2"]
     for cx, hdr in zip(cols_z, hdrs_z):
         c.drawString(cx, y, hdr)
     y -= 8
@@ -518,8 +548,8 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
 
     c.setFont("Helvetica", 10)
     for idx_z, z in enumerate(zones_lijst):
-        w_van = int(lt2_w * z["W_van"] / 100)
-        w_tot = int(lt2_w * z["W_tot"] / 100)
+        w_van = lt2_w * z["W_van"] / 100
+        w_tot = lt2_w * z["W_tot"] / 100
         h_van = int(max_vals["HR"] * z["HR_van"] / 100)
         h_tot = int(max_vals["HR"] * z["HR_tot"] / 100)
         try:
@@ -535,20 +565,30 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
         c.drawCentredString(cols_z[0]+21, y+3, z["Zone"])
         c.setFont("Helvetica", 10); c.setFillColor(colors.black)
         c.drawString(cols_z[1], y+3, str(z["Naam"]))
-        c.drawString(cols_z[2], y+3, f"{w_van} – {w_tot}")
-        c.drawString(cols_z[3], y+3, f"{h_van} – {h_tot}")
-        c.drawString(cols_z[4], y+3, str(z["Borg"]))
-        c.drawString(cols_z[5], y+3, f"{z['W_van']}–{z['W_tot']}%")
+        if is_lopen:
+            c.drawString(cols_z[2], y+3, f"{w_van:.1f} – {w_tot:.1f}")
+            c.drawString(cols_z[3], y+3, f"{pdf_tempo(w_van)} – {pdf_tempo(w_tot)}")
+            c.drawString(cols_z[4], y+3, f"{h_van} – {h_tot}")
+            c.drawString(cols_z[5], y+3, str(z["Borg"]))
+        else:
+            c.drawString(cols_z[2], y+3, f"{int(w_van)} – {int(w_tot)}")
+            c.drawString(cols_z[3], y+3, f"{h_van} – {h_tot}")
+            c.drawString(cols_z[4], y+3, str(z["Borg"]))
+            c.drawString(cols_z[5], y+3, f"{z['W_van']}–{z['W_tot']}%")
         y -= RZ
         if y < 90:
             break
 
-    y -= 22   # ruimte tussen secties
+    y -= 22
     y = section("RUWE TESTGEGEVENS PER TRAP", y)
     y -= 14
 
-    col_t = [50, 130, 248, 365, 465]
-    hdrs_t = ["Trap", "Vermogen (W)", "Hartslag (bpm)", "Lactaat (mmol/L)", "Borg"]
+    if is_lopen:
+        col_t  = [50, 130, 248, 348, 448]
+        hdrs_t = ["Trap", "Snelheid (km/u)", "Tempo (min/km)", "Hartslag (bpm)", "Lactaat (mmol/L)"]
+    else:
+        col_t  = [50, 130, 248, 365, 465]
+        hdrs_t = ["Trap", "Vermogen (W)", "Hartslag (bpm)", "Lactaat (mmol/L)", "Borg"]
     c.setFillColor(navy); c.setFont("Helvetica-Bold", 9.5)
     for cx, hdr in zip(col_t, hdrs_t):
         c.drawString(cx, y, hdr)
@@ -560,16 +600,23 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
             c.setFillColor(grey_bg)
             c.rect(45, y-6, W-90, RT, fill=1, stroke=0)
         c.setFillColor(colors.black)
+        watt_val = float(row['Watt'])
         c.drawString(col_t[0], y+3, f"Trap {i+1}")
-        c.drawString(col_t[1], y+3, f"{int(float(row['Watt']))} W")
-        c.drawString(col_t[2], y+3, f"{int(float(row['HR']))} bpm")
-        c.drawString(col_t[3], y+3, f"{float(row['Lac']):.2f}")
-        borg_val = row.get('Borg', '-')
-        c.drawString(col_t[4], y+3, str(borg_val) if str(borg_val) != 'nan' else "–")
+        if is_lopen:
+            c.drawString(col_t[1], y+3, f"{watt_val:.1f} km/u")
+            c.drawString(col_t[2], y+3, pdf_tempo(watt_val))
+            c.drawString(col_t[3], y+3, f"{int(float(row['HR']))} bpm")
+            c.drawString(col_t[4], y+3, f"{float(row['Lac']):.2f}")
+        else:
+            c.drawString(col_t[1], y+3, f"{int(watt_val)} W")
+            c.drawString(col_t[2], y+3, f"{int(float(row['HR']))} bpm")
+            c.drawString(col_t[3], y+3, f"{float(row['Lac']):.2f}")
+            borg_val = row.get('Borg', '-')
+            c.drawString(col_t[4], y+3, str(borg_val) if str(borg_val) != 'nan' else "–")
         y -= RT
         if y < 90:
             c.showPage()
-            draw_header("INSPANNINGSTEST", "Trainingszones & Meetdata", 2, 3)
+            draw_header("INSPANNINGSTEST", "Trainingszones & Meetdata", 2, 4)
             y = H - 130
 
     # Energieoverzicht
@@ -954,19 +1001,40 @@ with c4:
 doelen = st.text_input("Trainingsdoelen", placeholder="bijv. Sportief, Gewichtsreductie, Competitie...")
 
 st.markdown("#### Testgegevens invoer")
-df_in = st.data_editor(
-    pd.DataFrame({
-        "Watt": [100., 150., 200., 250., 300., 350.],
-        "HR":   [110., 125., 140., 155., 170., 185.],
-        "Lac":  [1.0,  1.2,  2.2,  4.5,  9.5, 12.0],
-        "Borg": [8.,   10.,  12.,  14.,  16.,  18.]
-    }),
-    num_rows="dynamic",
-    use_container_width=True,
-    key="data_editor"
-)
 
-c_df = df_in.dropna(subset=["Watt", "HR", "Lac"])
+# Sport type detectie
+is_lopen = any(s in sport.lower() for s in ["loop", "run", "atletiek", "triatlon", "triathlon"])
+sport_type = st.radio("Testtype", ["🚴 Fietsen (Watt)", "🏃 Lopen (km/u)"],
+                       index=1 if is_lopen else 0, horizontal=True)
+is_lopen = "Lopen" in sport_type
+
+if is_lopen:
+    df_in = st.data_editor(
+        pd.DataFrame({
+            "km/u": [8.0, 10.0, 12.0, 14.0, 16.0, 18.0],
+            "HR":   [110., 125., 140., 155., 170., 185.],
+            "Lac":  [1.0,  1.2,  2.2,  4.5,  9.5, 12.0],
+            "Borg": [8.,   10.,  12.,  14.,  16.,  18.]
+        }),
+        num_rows="dynamic",
+        use_container_width=True,
+        key="data_editor"
+    )
+    c_df = df_in.dropna(subset=["km/u", "HR", "Lac"]).copy()
+    c_df["Watt"] = c_df["km/u"]  # intern gebruiken we Watt kolom als x-as
+else:
+    df_in = st.data_editor(
+        pd.DataFrame({
+            "Watt": [100., 150., 200., 250., 300., 350.],
+            "HR":   [110., 125., 140., 155., 170., 185.],
+            "Lac":  [1.0,  1.2,  2.2,  4.5,  9.5, 12.0],
+            "Borg": [8.,   10.,  12.,  14.,  16.,  18.]
+        }),
+        num_rows="dynamic",
+        use_container_width=True,
+        key="data_editor"
+    )
+    c_df = df_in.dropna(subset=["Watt", "HR", "Lac"]).copy()
 
 if len(c_df) < 3:
     st.info("Voer minimaal 3 meetpunten in om de analyse te starten.")
@@ -975,7 +1043,23 @@ if len(c_df) < 3:
 x_v   = c_df["Watt"].values.astype(float)
 hr_v  = c_df["HR"].values.astype(float)
 lac_v = c_df["Lac"].values.astype(float)
-max_vals = {"Watt": int(x_v.max()), "HR": int(hr_v.max()), "Lac": float(lac_v.max())}
+
+# Eenheid labels
+x_eenheid  = "km/u" if is_lopen else "W"
+x_label    = "Snelheid (km/u)" if is_lopen else "Vermogen (Watt)"
+x_kort     = "km/u" if is_lopen else "W"
+
+def tempo_str(kmh):
+    """Zet km/u om naar min/km tempo string"""
+    if kmh <= 0: return "-"
+    sec = 3600 / kmh
+    return f"{int(sec//60)}:{int(sec%60):02d} min/km"
+
+max_vals = {
+    "Watt": int(x_v.max()),
+    "HR":   int(hr_v.max()),
+    "Lac":  float(lac_v.max())
+}
 
 # Leeftijd uit geboortedatum
 leeft = bereken_leeftijd(gebdat)
@@ -983,9 +1067,9 @@ leeft = bereken_leeftijd(gebdat)
 # Handmatige LT schuivers
 lt1_hand = lt2_hand = None
 if m_lt1 == "Handmatig":
-    lt1_hand = st.sidebar.slider("LT1 (W)", int(x_v.min()), int(x_v.max()), int(x_v.mean()))
+    lt1_hand = st.sidebar.slider(f"LT1 ({x_kort})", float(x_v.min()), float(x_v.max()), float(x_v.mean()))
 if m_lt2 == "Handmatig":
-    lt2_hand = st.sidebar.slider("LT2 (W)", int(x_v.min()), int(x_v.max()), int(x_v.mean()))
+    lt2_hand = st.sidebar.slider(f"LT2 ({x_kort})", float(x_v.min()), float(x_v.max()), float(x_v.mean()))
 
 lt1_w, lt2_w, xf, yf = bereken_drempels(x_v, lac_v, m_lt1, m_lt2, lt1_hand, lt2_hand)
 lt1_hr = interp_val(lt1_w, x_v, hr_v)
@@ -998,15 +1082,26 @@ tdee = bmr * pal
 vo2_gem, vo2_storer, vo2_lb = bereken_vo2max(x_v.max(), gew, hr_v.max())
 
 # Resultatenbox
-st.markdown(
-    f'<div class="biometry-box">'
-    f'<b>LT1:</b> {int(lt1_w)} W @ {int(lt1_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
-    f'<b>LT2:</b> {int(lt2_w)} W @ {int(lt2_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
-    f'<b>Max:</b> {max_vals["Watt"]} W &middot; {max_vals["HR"]} bpm &middot; {max_vals["Lac"]:.1f} mmol/L'
-    f'<br><b>VO₂max:</b> {vo2_gem} ml/kg/min &nbsp;(Storer: {vo2_storer} | Legge: {vo2_lb})'
-    f'&nbsp;&nbsp;|&nbsp;&nbsp; <b>BMI:</b> {bmi:.1f} &nbsp;&nbsp;|&nbsp;&nbsp; <b>TDEE:</b> {int(tdee)} kcal/dag'
-    f'</div>', unsafe_allow_html=True
-)
+if is_lopen:
+    st.markdown(
+        f'<div class="biometry-box">'
+        f'<b>LT1:</b> {lt1_w:.1f} km/u ({tempo_str(lt1_w)}) @ {int(lt1_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
+        f'<b>LT2:</b> {lt2_w:.1f} km/u ({tempo_str(lt2_w)}) @ {int(lt2_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
+        f'<b>Max:</b> {x_v.max():.1f} km/u &middot; {max_vals["HR"]} bpm &middot; {max_vals["Lac"]:.1f} mmol/L'
+        f'<br><b>VO₂max:</b> {vo2_gem} ml/kg/min &nbsp;(Storer: {vo2_storer} | Legge: {vo2_lb})'
+        f'&nbsp;&nbsp;|&nbsp;&nbsp; <b>BMI:</b> {bmi:.1f} &nbsp;&nbsp;|&nbsp;&nbsp; <b>TDEE:</b> {int(tdee)} kcal/dag'
+        f'</div>', unsafe_allow_html=True
+    )
+else:
+    st.markdown(
+        f'<div class="biometry-box">'
+        f'<b>LT1:</b> {int(lt1_w)} W @ {int(lt1_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
+        f'<b>LT2:</b> {int(lt2_w)} W @ {int(lt2_hr)} bpm &nbsp;&nbsp;|&nbsp;&nbsp; '
+        f'<b>Max:</b> {max_vals["Watt"]} W &middot; {max_vals["HR"]} bpm &middot; {max_vals["Lac"]:.1f} mmol/L'
+        f'<br><b>VO₂max:</b> {vo2_gem} ml/kg/min &nbsp;(Storer: {vo2_storer} | Legge: {vo2_lb})'
+        f'&nbsp;&nbsp;|&nbsp;&nbsp; <b>BMI:</b> {bmi:.1f} &nbsp;&nbsp;|&nbsp;&nbsp; <b>TDEE:</b> {int(tdee)} kcal/dag'
+        f'</div>', unsafe_allow_html=True
+    )
 
 # Energieoverzicht
 st.markdown(
@@ -1044,7 +1139,7 @@ ax1.text(lt2_w+2, yf.max()*0.35, 'LT2', color='#c62828', fontweight='bold',
 patches = [mpatches.Patch(color=z["color"], label=f"{z['Zone']} – {z['Naam']}")
            for z in st.session_state.zones]
 ax1.legend(handles=patches, loc='upper left', fontsize=8, framealpha=0.9)
-ax1.set_xlabel("Vermogen (Watt)", fontsize=11)
+ax1.set_xlabel(x_label, fontsize=11)
 ax1.set_ylabel("Lactaat (mmol/L)", color='#1E88E5', fontsize=11)
 ax2.set_ylabel("Hartslag (bpm)", color='#e53935', fontsize=11)
 ax1.set_xlim(x_v.min(), x_v.max())
@@ -1059,20 +1154,32 @@ st.pyplot(fig)
 st.markdown("#### Trainingszones")
 z_tab = []
 for z in st.session_state.zones:
-    w_van = int(lt2_w * z["W_van"] / 100)
-    w_tot = int(lt2_w * z["W_tot"] / 100)
+    w_van = lt2_w * z["W_van"] / 100
+    w_tot = lt2_w * z["W_tot"] / 100
     h_van = int(hr_v.max() * z["HR_van"] / 100)
     h_tot = int(hr_v.max() * z["HR_tot"] / 100)
-    z_tab.append({
-        "Zone": z["Zone"], "Naam": z["Naam"],
-        "Watt": f"{w_van}–{w_tot} W",
-        "Hartslag": f"{h_van}–{h_tot} bpm",
-        "Borg": z["Borg"], "color": z["color"]
-    })
+
+    if is_lopen:
+        zone_label = f"⚡ {w_van:.1f}–{w_tot:.1f} km/u ({tempo_str(w_van)}–{tempo_str(w_tot)})"
+        z_tab.append({
+            "Zone": z["Zone"], "Naam": z["Naam"],
+            "Snelheid": f"{w_van:.1f}–{w_tot:.1f} km/u",
+            "Tempo": f"{tempo_str(w_van)}–{tempo_str(w_tot)}",
+            "Hartslag": f"{h_van}–{h_tot} bpm",
+            "Borg": z["Borg"], "color": z["color"]
+        })
+    else:
+        zone_label = f"⚡ {int(w_van)}–{int(w_tot)} W"
+        z_tab.append({
+            "Zone": z["Zone"], "Naam": z["Naam"],
+            "Watt": f"{int(w_van)}–{int(w_tot)} W",
+            "Hartslag": f"{h_van}–{h_tot} bpm",
+            "Borg": z["Borg"], "color": z["color"]
+        })
     st.markdown(
         f'<div class="zone-card" style="background:{z["color"]};">'
         f'<b>{z["Zone"]} – {z["Naam"]}</b> &nbsp;&nbsp;'
-        f'⚡ {w_van}–{w_tot} W &nbsp;&nbsp;'
+        f'{zone_label} &nbsp;&nbsp;'
         f'❤️ {h_van}–{h_tot} bpm &nbsp;&nbsp;'
         f'Borg: {z["Borg"]}'
         f'</div>', unsafe_allow_html=True
@@ -1099,7 +1206,7 @@ else:
                 lt1_w=lt1_w, lt2_w=lt2_w, max_vals=max_vals,
                 fig=fig, zones_lijst=st.session_state.zones,
                 test_df=c_df, logo_file=logo_f, opmerkingen=opmerkingen,
-                labo_naam=labo_naam
+                labo_naam=labo_naam, is_lopen=is_lopen
             )
         if pdf:
             st.download_button(
