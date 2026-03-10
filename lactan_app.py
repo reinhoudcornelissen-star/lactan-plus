@@ -78,10 +78,15 @@ def check_login():
         label { color: #1E293B !important; font-weight: 600 !important; font-size: 14px !important; }
         .stTextInput label { display: none !important; }
         .stTextInput > div > div > input {
-            border: 1.5px solid #CBD5E1 !important;
-            border-radius: 8px !important;
-            color: #0F172A !important;
-            background: white !important;
+            border: 1.5px solid rgba(255,255,255,0.3) !important;
+            border-radius: 10px !important;
+            color: white !important;
+            background: rgba(255,255,255,0.08) !important;
+            font-size: 15px !important;
+            padding: 12px 16px !important;
+        }
+        .stTextInput > div > div > input::placeholder {
+            color: rgba(255,255,255,0.45) !important;
         }
         .stButton > button {
             background: linear-gradient(90deg, #1E88E5, #1565C0) !important;
@@ -107,9 +112,8 @@ def check_login():
     with col2:
         st.markdown('<div class="login-title">LacTan<span class="login-plus">+</span></div>', unsafe_allow_html=True)
         st.markdown('<div class="login-sub">Inspanningstest Platform</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        username = st.text_input("Gebruikersnaam", placeholder="Voer gebruikersnaam in")
-        password = st.text_input("Wachtwoord", type="password", placeholder="Voer wachtwoord in")
+        username = st.text_input("Gebruikersnaam", placeholder="Voer gebruikersnaam in", label_visibility="hidden")
+        password = st.text_input("Wachtwoord", type="password", placeholder="Voer wachtwoord in", label_visibility="hidden")
         if st.button("Inloggen", type="primary", use_container_width=True):
             if username in USERS and USERS[username] == password:
                 st.session_state.logged_in = True
@@ -117,7 +121,6 @@ def check_login():
             else:
                 st.error("❌ Ongeldige gebruikersnaam of wachtwoord")
         st.markdown('<div class="login-footer">© 2026 LacTan+ · Vertrouwelijk platform voor sportlaboratoria</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
     return False
 
 if not check_login():
