@@ -122,6 +122,7 @@ def check_login():
         if st.button("Inloggen", type="primary", use_container_width=True):
             if username in USERS and USERS[username] == password:
                 st.session_state.logged_in = True
+                st.session_state.username = username
                 st.rerun()
             else:
                 st.error("❌ Ongeldige gebruikersnaam of wachtwoord")
@@ -152,6 +153,7 @@ def init_db():
 
 def save_test(naam, datum, watt_list, lac_list, hr_list):
     init_db()
+    gebruiker = st.session_state.get("username", "onbekend")
     watt_str = ",".join([str(float(v)) for v in watt_list])
     lac_str  = ",".join([str(float(v)) for v in lac_list])
     hr_str   = ",".join([str(float(v)) for v in hr_list])
@@ -160,11 +162,12 @@ def save_test(naam, datum, watt_list, lac_list, hr_list):
     if sb:
         try:
             sb.table("tests").insert({
-                "naam":  naam,
-                "datum": str(datum),
-                "watt":  watt_str,
-                "lac":   lac_str,
-                "hr":    hr_str,
+                "naam":      naam,
+                "datum":     str(datum),
+                "watt":      watt_str,
+                "lac":       lac_str,
+                "hr":        hr_str,
+                "gebruiker": gebruiker,
             }).execute()
             return
         except Exception as e:
@@ -172,44 +175,55 @@ def save_test(naam, datum, watt_list, lac_list, hr_list):
 
     # Fallback: session_state
     st.session_state.db_tests.insert(0, {
-        "id":    st.session_state.db_next_id,
-        "naam":  naam,
-        "datum": str(datum),
-        "watt":  watt_str,
-        "lac":   lac_str,
-        "hr":    hr_str,
+        "id":        st.session_state.db_next_id,
+        "naam":      naam,
+        "datum":     str(datum),
+        "watt":      watt_str,
+        "lac":       lac_str,
+        "hr":        hr_str,
+        "gebruiker": gebruiker,
     })
     st.session_state.db_next_id += 1
 
 def load_tests():
     init_db()
+    gebruiker = st.session_state.get("username", "onbekend")
     sb = get_supabase()
     if sb:
         try:
-            res = sb.table("tests").select("*").order("id", desc=True).execute()
+            res = (sb.table("tests")
+                     .select("*")
+                     .eq("gebruiker", gebruiker)
+                     .order("id", desc=True)
+                     .execute())
             if res.data:
                 return pd.DataFrame(res.data)
+            return pd.DataFrame()
         except Exception:
             pass
 
-    # Fallback: session_state
-    if not st.session_state.db_tests:
+    # Fallback: session_state (filter op gebruiker)
+    gefilterd = [r for r in st.session_state.db_tests
+                 if r.get("gebruiker", "onbekend") == gebruiker]
+    if not gefilterd:
         return pd.DataFrame()
-    return pd.DataFrame(st.session_state.db_tests)
+    return pd.DataFrame(gefilterd)
 
 def delete_test(test_id):
     init_db()
+    gebruiker = st.session_state.get("username", "onbekend")
     sb = get_supabase()
     if sb:
         try:
-            sb.table("tests").delete().eq("id", int(test_id)).execute()
+            sb.table("tests").delete().eq("id", int(test_id)).eq("gebruiker", gebruiker).execute()
             return
         except Exception:
             pass
 
     # Fallback: session_state
     st.session_state.db_tests = [
-        r for r in st.session_state.db_tests if r["id"] != int(test_id)
+        r for r in st.session_state.db_tests
+        if not (r["id"] == int(test_id) and r.get("gebruiker") == gebruiker)
     ]
 
 init_db()
@@ -1103,15 +1117,33 @@ else:
 st.markdown("---")
 st.markdown("#### Vergelijken lactaatanalyses")
 
+# ── Supabase connectie status ──
+with st.expander("🔌 Supabase connectie status", expanded=False):
+    if not SUPABASE_OK:
+        st.error("❌ supabase library niet geïnstalleerd — controleer requirements.txt")
+    else:
+        sb_test = get_supabase()
+        if sb_test is None:
+            st.error("❌ Supabase secrets niet gevonden — controleer SUPABASE_URL en SUPABASE_KEY in Streamlit Secrets")
+        else:
+            try:
+                res = sb_test.table("tests").select("id").limit(1).execute()
+                st.success(f"✅ Supabase verbonden! Ingelogd als: **{st.session_state.get('username', '?')}**")
+            except Exception as e:
+                st.error(f"❌ Supabase verbinding mislukt: {e}")
+
 col_save, col_space = st.columns([1, 3])
 with col_save:
     if st.button("💾 Sla huidige meting op", use_container_width=True):
-        save_test(n_atl, test_d,
-                  c_df['Watt'].tolist(),
-                  c_df['Lac'].tolist(),
-                  c_df['HR'].tolist())
-        st.success("Meting opgeslagen!")
-        st.rerun()
+        try:
+            save_test(n_atl, test_d,
+                      c_df['Watt'].tolist(),
+                      c_df['Lac'].tolist(),
+                      c_df['HR'].tolist())
+            st.success("✅ Meting opgeslagen!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Opslaan mislukt: {e}")
 
 db_data = load_tests()
 
