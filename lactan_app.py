@@ -852,8 +852,8 @@ def genereer_vergelijking_pdf(naam, fig, rows, opmerkingen=""):
     c.drawString(58, y+6, "DREMPELANALYSE OVERZICHT")
     y -= 14
 
-    hdrs = ["Atleet", "Datum", "LT1 (W)", "LT2 (W)", "Max Lac"]
-    cols = [55, 180, 305, 385, 462]
+    hdrs = ["Atleet", "Datum", "LT1", "LT2", "Max Lac", "Max"]
+    cols = [55, 180, 295, 360, 425, 495]
     c.setFont("Helvetica-Bold", 9); c.setFillColor(navy)
     for cx, hdr in zip(cols, hdrs): c.drawString(cx, y, hdr)
     y -= 6; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= 16
@@ -864,7 +864,10 @@ def genereer_vergelijking_pdf(naam, fig, rows, opmerkingen=""):
             c.setFillColor(grey_bg); c.rect(45, y-4, W-90, 16, fill=1, stroke=0)
         c.setFillColor(colors.black)
         for cx, val in zip(cols, [r['Atleet'], r['Datum'],
-                                   f"{r['LT1 (W)']} W", f"{r['LT2 (W)']} W", r['Max Lac']]):
+                                   r.get('LT1', r.get('LT1 (W)', '-')),
+                                   r.get('LT2', r.get('LT2 (W)', '-')),
+                                   r.get('Max Lac', '-'),
+                                   r.get('Max', '-')]):
             c.drawString(cx, y+2, str(val))
         y -= 18
 
