@@ -76,6 +76,7 @@ def check_login():
             box-shadow: 0 24px 60px rgba(0,0,0,0.5);
         }
         label { color: #1E293B !important; font-weight: 600 !important; font-size: 14px !important; }
+        .stTextInput label { display: none !important; }
         .stTextInput > div > div > input {
             border: 1.5px solid #CBD5E1 !important;
             border-radius: 8px !important;
