@@ -273,15 +273,8 @@ def admin_dashboard():
                     st.success("Verwijderd!"); st.rerun()
 
 if st.session_state.get("is_admin") and st.session_state.get("username") == "admin":
-    tab_main, tab_admin = st.tabs(["🔬 Inspanningstest", "⚙️ Admin Dashboard"])
-    with tab_admin:
-        admin_dashboard()
-    with tab_main:
-        pass  # hoofdapp volgt hieronder — wordt geladen in tab_main context
-    # Zet context naar tab_main voor rest van de code
-    _in_admin = True
-else:
-    _in_admin = False
+    if "show_admin" not in st.session_state:
+        st.session_state.show_admin = False
 
 # ─────────────────────────────────────────────
 #  DATABASE (Supabase met session_state fallback)
@@ -1084,6 +1077,13 @@ with st.sidebar:
     else:
         st.markdown(f"👤 **{uname}**")
 
+    # Admin knop
+    if st.session_state.get("is_admin"):
+        admin_label = "✖️ Sluit Admin" if st.session_state.get("show_admin") else "⚙️ Admin Dashboard"
+        if st.button(admin_label, use_container_width=True):
+            st.session_state.show_admin = not st.session_state.get("show_admin", False)
+            st.rerun()
+
     if st.button("Uitloggen", use_container_width=True):
         st.session_state.logged_in = False
         st.rerun()
@@ -1145,6 +1145,13 @@ with st.sidebar:
                 "W_van":nz_wv,"W_tot":nz_wt,"HR_van":nz_hv,"HR_tot":nz_ht,"Borg":nz_borg
             })
             st.rerun()
+
+# ─────────────────────────────────────────────
+#  ADMIN DASHBOARD WEERGAVE (indien actief)
+# ─────────────────────────────────────────────
+if st.session_state.get("is_admin") and st.session_state.get("show_admin"):
+    admin_dashboard()
+    st.stop()
 
 # ─────────────────────────────────────────────
 #  HOOFDPAGINA  –  INVOER
