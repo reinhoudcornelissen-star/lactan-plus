@@ -88,15 +88,15 @@ def check_login():
         label { color: #1E293B !important; font-weight: 600 !important; font-size: 14px !important; }
         .stTextInput label { display: none !important; }
         .stTextInput > div > div > input {
-            border: 1.5px solid rgba(255,255,255,0.3) !important;
+            border: 1.5px solid rgba(255,255,255,0.25) !important;
             border-radius: 10px !important;
-            color: white !important;
-            background: rgba(255,255,255,0.08) !important;
+            color: #0F172A !important;
+            background: rgba(255,255,255,0.92) !important;
             font-size: 15px !important;
             padding: 12px 16px !important;
         }
         .stTextInput > div > div > input::placeholder {
-            color: rgba(255,255,255,0.45) !important;
+            color: #94A3B8 !important;
         }
         .stButton > button {
             background: linear-gradient(90deg, #1E88E5, #1565C0) !important;
@@ -269,23 +269,30 @@ def bereken_drempels(x_v, lac_v, lt1_methode, lt2_methode,
     return lt1_w, lt2_w, xf, yf
 
 def bereken_vo2max(watt_max, gew, hr_max, hr_rust=60):
-    """
-    VO2max berekening via meerdere methoden, gemiddelde als eindwaarde.
-    1. Fiets ergometer formule (Storer et al.): VO2max = (10.8 * Wmax / kg) + 7
-    2. Inline correctie hartslag reserve (Karvonen-gebaseerd)
-    3. Tanaka HRmax schatting indien nodig
-    """
-    # Methode 1: Storer et al. (fietsergometer)
+    """VO2max fietsen: Storer + Legge & Banister, gemiddelde."""
     vo2_storer = (10.8 * watt_max / gew) + 7.0
-
-    # Methode 2: Legge & Banister correctie
-    # VO2max (L/min) = (0.01141 * Wmax) + (0.01206 * lichaamsgewicht) - 0.9090
     vo2_lb_lmin = (0.01141 * watt_max) + (0.01206 * gew) - 0.9090
-    vo2_lb = (vo2_lb_lmin * 1000) / gew  # ml/kg/min
-
-    # Gemiddelde van beide methoden
+    vo2_lb = (vo2_lb_lmin * 1000) / gew
     vo2_gem = (vo2_storer + vo2_lb) / 2
     return round(vo2_gem, 1), round(vo2_storer, 1), round(vo2_lb, 1)
+
+def bereken_vo2max_lopen(snelheid_max, hr_max, hr_rust=60, leeft=30):
+    """
+    VO2max lopen via twee methoden, gemiddelde als eindwaarde.
+    1. Léger & Bouchard (loopband): VO2max = 3.5 * v (km/u) bij maximale snelheid
+       Verfijnd: VO2 = -4.60 + 0.182258 * v * 60 + 0.000104 * (v*60)^2  (Bruce protocol)
+       Praktisch voor traptest: VO2max = 3.5 * vmax (ml/kg/min)
+    2. Hartslag methode (Fox): VO2max = 15 * HRmax / HRrust
+    """
+    # Methode 1: Léger loopband formule (vmax in km/u)
+    vo2_leger = 3.5 * snelheid_max
+
+    # Methode 2: Hartslag reservemethode (Fox & Haskell)
+    hr_rust_schat = hr_rust if hr_rust > 40 else 60
+    vo2_hr = 15.0 * hr_max / hr_rust_schat
+
+    vo2_gem = (vo2_leger + vo2_hr) / 2
+    return round(vo2_gem, 1), round(vo2_leger, 1), round(vo2_hr, 1)
 
 def energie_verdeling(tdee, lt1_w, lt2_w, lt2_w_ref):
     """Schat energieverdeling per zone op basis van TDEE en drempelverhouding."""
@@ -699,14 +706,16 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
 
     # Rij 1
     c.setFont("Helvetica", 10); c.setFillColor(colors.HexColor("#374151"))
-    c.drawString(col_l, y - 30, "Storer et al. (fietsergometer)")
+    m1_naam = "Léger & Bouchard (loopband — vmax × 3.5)" if is_lopen else "Storer et al. (fietsergometer)"
+    c.drawString(col_l, y - 30, m1_naam)
     c.setFont("Helvetica-Bold", 10); c.setFillColor(navy)
     c.drawRightString(col_r, y - 30, f"{vo2_storer} ml/kg/min")
 
     # Rij 2 (shaded)
     c.setFillColor(grey_bg); c.rect(46, y - 49, W - 93, 17, fill=1, stroke=0)
     c.setFont("Helvetica", 10); c.setFillColor(colors.HexColor("#374151"))
-    c.drawString(col_l, y - 45, "Legge & Banister (vermogen/gewicht)")
+    m2_naam = "Fox & Haskell (hartslagreserve — 15 × HRmax / HRrust)" if is_lopen else "Legge & Banister (vermogen/gewicht)"
+    c.drawString(col_l, y - 45, m2_naam)
     c.setFont("Helvetica-Bold", 10); c.setFillColor(navy)
     c.drawRightString(col_r, y - 45, f"{vo2_lb} ml/kg/min")
 
@@ -1080,6 +1089,8 @@ bmi  = gew / ((leng / 100) ** 2)
 bmr  = (10*gew) + (6.25*leng) - (5*leeft) + (5 if gesl == "Man" else -161)
 tdee = bmr * pal
 vo2_gem, vo2_storer, vo2_lb = bereken_vo2max(x_v.max(), gew, hr_v.max())
+if is_lopen:
+    vo2_gem, vo2_storer, vo2_lb = bereken_vo2max_lopen(x_v.max(), hr_v.max())
 
 # Resultatenbox
 if is_lopen:
@@ -1222,26 +1233,24 @@ else:
 #  VERGELIJKING & DATABASE
 # ─────────────────────────────────────────────
 st.markdown("---")
-st.markdown("#### Vergelijken lactaatanalyses")
+st.markdown("""
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+  <div style="width:5px;height:32px;background:linear-gradient(180deg,#1E88E5,#1565C0);border-radius:3px;"></div>
+  <div>
+    <div style="font-size:22px;font-weight:800;color:#0F172A;letter-spacing:-0.3px;">Vergelijken Lactaatanalyses</div>
+    <div style="font-size:13px;color:#64748B;margin-top:1px;">Sla metingen op en vergelijk prestaties over meerdere testen</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-# ── Supabase connectie status ──
-with st.expander("🔌 Supabase connectie status", expanded=False):
-    if not SUPABASE_OK:
-        st.error("❌ supabase library niet geïnstalleerd — controleer requirements.txt")
-    else:
-        sb_test = get_supabase()
-        if sb_test is None:
-            st.error("❌ Supabase secrets niet gevonden — controleer SUPABASE_URL en SUPABASE_KEY in Streamlit Secrets")
-        else:
-            try:
-                res = sb_test.table("tests").select("id").limit(1).execute()
-                st.success(f"✅ Supabase verbonden! Ingelogd als: **{st.session_state.get('username', '?')}**")
-            except Exception as e:
-                st.error(f"❌ Supabase verbinding mislukt: {e}")
+st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
-col_save, col_space = st.columns([1, 3])
+# ── Opslaan + Supabase status in één balk ──
+col_save, col_status = st.columns([2, 3])
 with col_save:
-    if st.button("💾 Sla huidige meting op", use_container_width=True):
+    st.markdown("""<div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:6px;">
+        Huidige meting opslaan</div>""", unsafe_allow_html=True)
+    if st.button("💾 Sla huidige meting op", use_container_width=True, type="primary"):
         try:
             save_test(n_atl, test_d,
                       c_df['Watt'].tolist(),
@@ -1252,82 +1261,178 @@ with col_save:
         except Exception as e:
             st.error(f"❌ Opslaan mislukt: {e}")
 
+with col_status:
+    with st.expander("🔌 Supabase connectie status", expanded=False):
+        if not SUPABASE_OK:
+            st.error("❌ supabase library niet geïnstalleerd")
+        else:
+            sb_test = get_supabase()
+            if sb_test is None:
+                st.error("❌ Secrets niet gevonden — controleer SUPABASE_URL en SUPABASE_KEY")
+            else:
+                try:
+                    sb_test.table("tests").select("id").limit(1).execute()
+                    st.success(f"✅ Verbonden als **{st.session_state.get('username', '?')}**")
+                except Exception as e:
+                    st.error(f"❌ Verbinding mislukt: {e}")
+
+st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
 db_data = load_tests()
 
 if db_data.empty:
-    st.info("Nog geen metingen opgeslagen. Sla een meting op om te vergelijken.")
+    st.markdown("""
+    <div style="background:#F1F5F9;border-radius:12px;padding:24px 28px;
+         border:1px solid #E2E8F0;text-align:center;color:#64748B;font-size:14px;">
+        📂 &nbsp;Nog geen metingen opgeslagen. Sla een meting op via de knop hierboven.
+    </div>
+    """, unsafe_allow_html=True)
 else:
-    # Database beheer – verwijderen
-    with st.expander("🗑️ Metingen beheren / verwijderen"):
+    # ── Metingen overzicht + beheer ──
+    st.markdown("""<div style="font-size:14px;font-weight:700;color:#0F172A;margin-bottom:8px;">
+        📁 Opgeslagen metingen</div>""", unsafe_allow_html=True)
+
+    with st.expander(f"🗂️ Beheer metingen  ({len(db_data)} opgeslagen)", expanded=False):
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
         for _, row in db_data.iterrows():
-            col_a, col_b = st.columns([4, 1])
-            col_a.write(f"**{row['naam']}** – {row['datum']}  (ID: {row['id']})")
-            if col_b.button("Verwijder", key=f"rm_{row['id']}"):
+            col_a, col_b, col_c = st.columns([3, 2, 1])
+            col_a.markdown(f"**{row['naam']}**")
+            col_b.markdown(f"<span style='color:#64748B;font-size:13px;'>{row['datum']}</span>", unsafe_allow_html=True)
+            if col_c.button("🗑️", key=f"rm_{row['id']}", help="Verwijder deze meting"):
                 delete_test(row['id'])
                 st.success(f"Meting van {row['naam']} ({row['datum']}) verwijderd.")
                 st.rerun()
 
-    opties = {i: f"{row['naam']} ({row['datum']})" for i, row in db_data.iterrows()}
-    keuze  = st.multiselect("Selecteer testen voor vergelijking:",
+    # ── Selectie voor vergelijking ──
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown("""<div style="font-size:14px;font-weight:700;color:#0F172A;margin-bottom:6px;">
+        📊 Selecteer testen voor vergelijking</div>""", unsafe_allow_html=True)
+
+    opties = {i: f"{row['naam']}  —  {row['datum']}" for i, row in db_data.iterrows()}
+    keuze  = st.multiselect("Testen",
                              list(opties.keys()),
-                             format_func=lambda x: opties[x])
+                             format_func=lambda x: opties[x],
+                             label_visibility="collapsed")
 
     if keuze:
-        fig_v, ax_v = plt.subplots(figsize=(10, 5))
-        tabel_rows  = []
+        # ── Vergelijkingsgrafiek ──
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-        for i in keuze:
+        KLEUREN = ['#1E88E5','#E53935','#43A047','#FB8C00','#8E24AA','#00ACC1','#F4511E']
+        fig_v, ax_v = plt.subplots(figsize=(11, 5))
+        fig_v.patch.set_facecolor('#F8FAFC')
+        ax_v.set_facecolor('#F8FAFC')
+        tabel_rows = []
+
+        for idx, i in enumerate(keuze):
             r  = db_data.iloc[i]
+            kleur = KLEUREN[idx % len(KLEUREN)]
             xw = np.array([float(v) for v in r['watt'].split(',')])
             yl = np.array([float(v) for v in r['lac'].split(',')])
             xfine = np.linspace(xw.min(), xw.max(), 500)
             yfine = PchipInterpolator(xw, yl)(xfine)
 
-            i1  = np.where(yfine >= (float(np.mean(yl[:2])) + 1.0))[0]
-            lt1_v = int(xfine[i1[0]]) if len(i1) > 0 else int(xw[0])
-            i2  = np.where(yfine >= (float(np.mean(yl[:2])) + 0.4))[0]
-            s_b = i2[0] if len(i2) > 0 else 0
-            dist = np.abs(
+            i1    = np.where(yfine >= (float(np.mean(yl[:2])) + 1.0))[0]
+            lt1_v = float(xfine[i1[0]]) if len(i1) > 0 else float(xw[0])
+            i2    = np.where(yfine >= (float(np.mean(yl[:2])) + 0.4))[0]
+            s_b   = i2[0] if len(i2) > 0 else 0
+            dist  = np.abs(
                 (yfine[-1]-yfine[s_b])*xfine[s_b:] -
                 (xfine[-1]-xfine[s_b])*yfine[s_b:] +
                 xfine[-1]*yfine[s_b] - yfine[-1]*xfine[s_b]
             )
-            lt2_v = int(xfine[s_b + np.argmax(dist)])
+            lt2_v = float(xfine[s_b + np.argmax(dist)])
 
-            line, = ax_v.plot(xfine, yfine,
-                              label=f"{r['naam']} ({r['datum']})", linewidth=2.5)
-            col = line.get_color()
-            ax_v.scatter([lt1_v, lt2_v],
-                         [interp_val(lt1_v, xw, yl), interp_val(lt2_v, xw, yl)],
-                         color=col, edgecolors='white', s=80, zorder=5)
+            ax_v.plot(xfine, yfine, color=kleur,
+                      label=f"{r['naam']}  ({r['datum']})", linewidth=2.5)
+            ax_v.scatter([lt1_v], [interp_val(lt1_v, xw, yl)],
+                         color=kleur, edgecolors='white', s=90, zorder=5,
+                         marker='o', linewidths=1.5)
+            ax_v.scatter([lt2_v], [interp_val(lt2_v, xw, yl)],
+                         color=kleur, edgecolors='white', s=90, zorder=5,
+                         marker='D', linewidths=1.5)
+            ax_v.scatter(xw, yl, color=kleur, s=35, alpha=0.5, zorder=4)
+
             tabel_rows.append({
-                "Atleet": r['naam'], "Datum": r['datum'],
-                "LT1 (W)": lt1_v, "LT2 (W)": lt2_v,
-                "Max Lac": f"{yl.max():.1f}"
+                "Atleet":   r['naam'],
+                "Datum":    r['datum'],
+                "LT1":      f"{lt1_v:.0f}",
+                "LT2":      f"{lt2_v:.0f}",
+                "Max Lac":  f"{yl.max():.1f} mmol/L",
+                "Max":      f"{xw.max():.0f}",
             })
 
         ax_v.set_title("Vergelijkende Lactaatcurve – LacTan+", fontsize=13,
-                       fontweight='bold', color='#0F172A')
-        ax_v.set_xlabel("Vermogen (Watt)"); ax_v.set_ylabel("Lactaat (mmol/L)")
-        ax_v.legend(); ax_v.grid(True, alpha=0.3)
+                       fontweight='bold', color='#0F172A', pad=14)
+        ax_v.set_xlabel(x_label, fontsize=11, color='#374151')
+        ax_v.set_ylabel("Lactaat (mmol/L)", fontsize=11, color='#1E88E5')
+        ax_v.legend(fontsize=9, framealpha=0.95, edgecolor='#E2E8F0')
+        ax_v.grid(True, alpha=0.25, linestyle='--')
+        ax_v.spines['top'].set_visible(False)
+        ax_v.spines['right'].set_visible(False)
         fig_v.tight_layout()
         st.pyplot(fig_v)
 
-        st.markdown("##### Vergelijkingstabel")
-        st.table(pd.DataFrame(tabel_rows))
+        # ── Vergelijkingstabel ──
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        st.markdown("""<div style="font-size:14px;font-weight:700;color:#0F172A;margin-bottom:8px;">
+            📋 Resultaten per test</div>""", unsafe_allow_html=True)
 
-        st.markdown("##### Opmerkingen coach (vergelijking)")
-        opm_verg = st.text_area("Observaties over de vergelijking:",
-                                 placeholder="Beschrijf de evolutie, verbeteringen, aandachtspunten...",
-                                 height=120, key="opm_vergelijking")
+        eenheid = "km/u" if is_lopen else "W"
+        df_verg = pd.DataFrame(tabel_rows).rename(columns={
+            "LT1": f"LT1 ({eenheid})",
+            "LT2": f"LT2 ({eenheid})",
+            "Max": f"Max ({eenheid})",
+        })
 
+        # Stijl de tabel
+        st.markdown("""
+        <style>
+        .verg-table { width:100%; border-collapse:collapse; font-size:14px; }
+        .verg-table th { background:#0F172A; color:white; padding:10px 14px;
+                         text-align:left; font-weight:600; font-size:13px; }
+        .verg-table td { padding:9px 14px; border-bottom:1px solid #E2E8F0; color:#1E293B; }
+        .verg-table tr:nth-child(even) td { background:#F8FAFC; }
+        .verg-table tr:hover td { background:#EFF6FF; }
+        </style>
+        """, unsafe_allow_html=True)
+
+        tabel_html = '<table class="verg-table"><thead><tr>'
+        for col in df_verg.columns:
+            tabel_html += f'<th>{col}</th>'
+        tabel_html += '</tr></thead><tbody>'
+        for _, rij in df_verg.iterrows():
+            tabel_html += '<tr>'
+            for val in rij:
+                tabel_html += f'<td>{val}</td>'
+            tabel_html += '</tr>'
+        tabel_html += '</tbody></table>'
+        st.markdown(tabel_html, unsafe_allow_html=True)
+
+        # ── Opmerkingen coach ──
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <div style="width:4px;height:22px;background:#1E88E5;border-radius:2px;"></div>
+          <div style="font-size:14px;font-weight:700;color:#0F172A;">Opmerkingen coach</div>
+        </div>
+        """, unsafe_allow_html=True)
+        opm_verg = st.text_area(
+            "Observaties",
+            placeholder="Beschrijf de evolutie, verbeteringen, aandachtspunten bij deze vergelijking...",
+            height=130, key="opm_vergelijking", label_visibility="collapsed"
+        )
+
+        # ── PDF download ──
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         if REPORTLAB_OK:
             pdf_verg = genereer_vergelijking_pdf(n_atl, fig_v, tabel_rows, opm_verg)
             if pdf_verg:
                 st.download_button(
-                    "Download Vergelijking PDF",
+                    "📄  Download Vergelijking PDF",
                     data=pdf_verg,
                     file_name=f"LacTan_Vergelijking_{n_atl}.pdf",
                     mime="application/pdf",
-                    use_container_width=True
+                    use_container_width=True,
+                    type="primary"
                 )
