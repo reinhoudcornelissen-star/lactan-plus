@@ -30,105 +30,108 @@ except ImportError:
 st.set_page_config(page_title="LacTan+", page_icon="🚴", layout="wide")
 
 # ─────────────────────────────────────────────
-#  LOGIN
+#  LOGIN & GEBRUIKERSBEHEER
 # ─────────────────────────────────────────────
-# ─────────────────────────────────────────────
-# Laad gebruikers uit Streamlit Secrets of gebruik standaard
-try:
-    USERS = dict(st.secrets["users"])
-except Exception:
-    USERS = {"sportlab": "welkom_sportlab", "admin": "lactan2024"}
+
+LOGIN_CSS = """
+<style>
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%) !important;
+}
+[data-testid="stMain"] { background: transparent !important; }
+[data-testid="stHeader"] { background: transparent !important; }
+.block-container { padding-top: 0 !important; }
+.login-title {
+    font-size: 52px; font-weight: 900; color: white !important;
+    text-align: center; letter-spacing: -1px; margin-bottom: 6px;
+}
+.login-plus { color: #1E88E5; }
+.login-sub { text-align: center; font-size: 16px; color: #93C5FD; margin-bottom: 36px; }
+.stTextInput label { display: none !important; }
+.stTextInput > div > div > input {
+    border: 1.5px solid rgba(255,255,255,0.25) !important;
+    border-radius: 10px !important; color: #0F172A !important;
+    background: rgba(255,255,255,0.92) !important;
+    font-size: 15px !important; padding: 12px 16px !important;
+}
+.stTextInput > div > div > input::placeholder { color: #94A3B8 !important; }
+.stButton > button {
+    background: linear-gradient(90deg, #1E88E5, #1565C0) !important;
+    color: white !important; border-radius: 10px !important;
+    font-size: 16px !important; font-weight: 700 !important;
+    padding: 12px !important; border: none !important;
+    margin-top: 8px !important; width: 100% !important;
+}
+.login-footer { text-align: center; font-size: 11px; color: #64748B; margin-top: 18px; }
+</style>
+"""
+
+def get_supabase():
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key) if SUPABASE_OK else None
+    except Exception:
+        return None
+
+def login_gebruiker(username, password):
+    """Controleer gebruiker in Supabase gebruikers tabel."""
+    sb = get_supabase()
+    if sb:
+        try:
+            res = sb.table("gebruikers") \
+                    .select("*") \
+                    .eq("username", username) \
+                    .eq("password", password) \
+                    .eq("actief", True) \
+                    .execute()
+            if res.data:
+                u = res.data[0]
+                # Check geldigheid
+                if u["abonnement"] == "maand" and u.get("betaald_tot"):
+                    betaald_tot = date.fromisoformat(str(u["betaald_tot"]))
+                    if betaald_tot < date.today():
+                        return None, "verlopen"
+                if u["abonnement"] == "credits" and (u.get("credits") or 0) <= 0:
+                    return None, "geen_credits"
+                return u, "ok"
+        except Exception as e:
+            pass
+    # Fallback: Streamlit Secrets (voor admin)
+    try:
+        USERS = dict(st.secrets.get("users", {}))
+        if username in USERS and USERS[username] == password:
+            return {"username": username, "abonnement": "maand",
+                    "sportlab": "Admin", "credits": 999}, "ok"
+    except Exception:
+        pass
+    return None, "fout"
 
 def check_login():
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
     if st.session_state.logged_in:
         return True
-    st.markdown("""
-        <style>
-        [data-testid="stAppViewContainer"] {
-            background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%) !important;
-        }
-        [data-testid="stMain"] { background: transparent !important; }
-        [data-testid="stHeader"] { background: transparent !important; }
-        .block-container { padding-top: 0 !important; }
-        .login-outer {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 80vh;
-            padding-top: 40px;
-        }
-        .login-title {
-            font-size: 52px;
-            font-weight: 900;
-            color: white !important;
-            text-align: center;
-            letter-spacing: -1px;
-            margin-bottom: 6px;
-        }
-        .login-plus {
-            color: #1E88E5;
-        }
-        .login-sub {
-            text-align: center;
-            font-size: 16px;
-            color: #93C5FD;
-            margin-bottom: 36px;
-        }
-        .login-card {
-            background: white;
-            border-radius: 16px;
-            padding: 36px 40px 32px 40px;
-            width: 100%;
-            max-width: 420px;
-            box-shadow: 0 24px 60px rgba(0,0,0,0.5);
-        }
-        label { color: #1E293B !important; font-weight: 600 !important; font-size: 14px !important; }
-        .stTextInput label { display: none !important; }
-        .stTextInput > div > div > input {
-            border: 1.5px solid rgba(255,255,255,0.25) !important;
-            border-radius: 10px !important;
-            color: #0F172A !important;
-            background: rgba(255,255,255,0.92) !important;
-            font-size: 15px !important;
-            padding: 12px 16px !important;
-        }
-        .stTextInput > div > div > input::placeholder {
-            color: #94A3B8 !important;
-        }
-        .stButton > button {
-            background: linear-gradient(90deg, #1E88E5, #1565C0) !important;
-            color: white !important;
-            border-radius: 10px !important;
-            font-size: 16px !important;
-            font-weight: 700 !important;
-            padding: 12px !important;
-            border: none !important;
-            margin-top: 8px !important;
-            width: 100% !important;
-        }
-        .login-footer {
-            text-align: center;
-            font-size: 11px;
-            color: #64748B;
-            margin-top: 18px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
 
+    st.markdown(LOGIN_CSS, unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown('<div class="login-title">LacTan<span class="login-plus">+</span></div>', unsafe_allow_html=True)
         st.markdown('<div class="login-sub">Inspanningstest Platform</div>', unsafe_allow_html=True)
-        username = st.text_input("Gebruikersnaam", placeholder="Voer gebruikersnaam in", label_visibility="hidden")
-        password = st.text_input("Wachtwoord", type="password", placeholder="Voer wachtwoord in", label_visibility="hidden")
+        username = st.text_input("Gebruikersnaam", placeholder="Gebruikersnaam", label_visibility="hidden", key="login_user")
+        password = st.text_input("Wachtwoord", type="password", placeholder="Wachtwoord", label_visibility="hidden", key="login_pass")
         if st.button("Inloggen", type="primary", use_container_width=True):
-            if username in USERS and USERS[username] == password:
-                st.session_state.logged_in = True
-                st.session_state.username = username
+            user_data, status = login_gebruiker(username, password)
+            if status == "ok" and user_data:
+                st.session_state.logged_in  = True
+                st.session_state.username   = user_data["username"]
+                st.session_state.user_data  = user_data
+                st.session_state.is_admin   = (user_data["username"] == "admin")
                 st.rerun()
+            elif status == "verlopen":
+                st.error("⏰ Je abonnement is verlopen. Neem contact op voor verlenging.")
+            elif status == "geen_credits":
+                st.error("🔋 Geen credits meer. Neem contact op voor aanvulling.")
             else:
                 st.error("❌ Ongeldige gebruikersnaam of wachtwoord")
         st.markdown('<div class="login-footer">© 2026 LacTan+ · Vertrouwelijk platform voor sportlaboratoria</div>', unsafe_allow_html=True)
@@ -138,17 +141,151 @@ if not check_login():
     st.stop()
 
 # ─────────────────────────────────────────────
+#  ADMIN DASHBOARD (enkel zichtbaar voor admin)
+# ─────────────────────────────────────────────
+def admin_dashboard():
+    sb = get_supabase()
+
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+      <div style="width:5px;height:36px;background:linear-gradient(180deg,#1E88E5,#1565C0);border-radius:3px;"></div>
+      <div>
+        <div style="font-size:24px;font-weight:800;color:#0F172A;">Admin Dashboard</div>
+        <div style="font-size:13px;color:#64748B;">Gebruikersbeheer & abonnementen</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Statistieken ──
+    if sb:
+        try:
+            alle = sb.table("gebruikers").select("*").neq("username","admin").execute().data or []
+            actief_maand   = sum(1 for u in alle if u["abonnement"]=="maand" and u["actief"]
+                                  and u.get("betaald_tot") and date.fromisoformat(str(u["betaald_tot"])) >= date.today())
+            actief_credits = sum(1 for u in alle if u["abonnement"]=="credits" and u["actief"] and (u.get("credits") or 0) > 0)
+            verlopen       = sum(1 for u in alle if u["abonnement"]=="maand"
+                                  and (not u.get("betaald_tot") or date.fromisoformat(str(u["betaald_tot"])) < date.today()))
+            totaal_credits = sum((u.get("credits") or 0) for u in alle if u["abonnement"]=="credits")
+        except Exception:
+            alle, actief_maand, actief_credits, verlopen, totaal_credits = [], 0, 0, 0, 0
+    else:
+        alle, actief_maand, actief_credits, verlopen, totaal_credits = [], 0, 0, 0, 0
+
+    k1, k2, k3, k4 = st.columns(4)
+    for col, label, val, kleur in [
+        (k1, "Actief (maand)",   actief_maand,   "#DCFCE7"),
+        (k2, "Actief (credits)", actief_credits, "#DBEAFE"),
+        (k3, "Verlopen",         verlopen,        "#FEE2E2"),
+        (k4, "Totaal accounts",  len(alle),       "#F1F5F9"),
+    ]:
+        col.markdown(f"""
+        <div style="background:{kleur};border-radius:12px;padding:16px 20px;text-align:center;">
+          <div style="font-size:28px;font-weight:800;color:#0F172A;">{val}</div>
+          <div style="font-size:12px;color:#475569;margin-top:2px;">{label}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+
+    # ── Nieuw account aanmaken ──
+    with st.expander("➕ Nieuw account aanmaken", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        nw_user  = c1.text_input("Gebruikersnaam", key="nw_user", placeholder="bv. sportlab_gent")
+        nw_pass  = c1.text_input("Wachtwoord", key="nw_pass", placeholder="Kies een sterk wachtwoord")
+        nw_email = c2.text_input("E-mail", key="nw_email", placeholder="info@sportlab.be")
+        nw_lab   = c2.text_input("Naam sportlab", key="nw_lab", placeholder="Sportlab Gent")
+        nw_type  = c3.selectbox("Abonnement", ["maand", "credits"], key="nw_type")
+        if nw_type == "maand":
+            nw_tot = c3.date_input("Betaald tot", value=date.today().replace(month=date.today().month % 12 + 1) if date.today().month < 12 else date.today().replace(year=date.today().year+1, month=1), key="nw_tot")
+            nw_cred = 0
+        else:
+            nw_cred = c3.number_input("Aantal credits", min_value=1, value=10, key="nw_cred")
+            nw_tot = None
+        nw_nota = st.text_input("Notities (factuur nr, contactpersoon…)", key="nw_nota", placeholder="optioneel")
+
+        if st.button("✅ Account aanmaken", type="primary"):
+            if not nw_user or not nw_pass:
+                st.error("Gebruikersnaam en wachtwoord zijn verplicht.")
+            elif sb:
+                try:
+                    invoer = {
+                        "username": nw_user, "password": nw_pass,
+                        "email": nw_email, "sportlab": nw_lab,
+                        "actief": True, "abonnement": nw_type,
+                        "betaald_tot": str(nw_tot) if nw_tot else None,
+                        "credits": nw_cred, "notities": nw_nota,
+                    }
+                    sb.table("gebruikers").insert(invoer).execute()
+                    st.success(f"✅ Account **{nw_user}** aangemaakt!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Fout: {e}")
+            else:
+                st.error("Geen Supabase verbinding.")
+
+    # ── Gebruikersoverzicht ──
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.markdown("### 👥 Gebruikersoverzicht")
+
+    if not alle:
+        st.info("Nog geen gebruikers aangemaakt.")
+    else:
+        for u in alle:
+            betaald_tot = u.get("betaald_tot")
+            credits     = u.get("credits") or 0
+            verlopen_u  = False
+            if u["abonnement"] == "maand" and betaald_tot:
+                verlopen_u = date.fromisoformat(str(betaald_tot)) < date.today()
+            elif u["abonnement"] == "credits":
+                verlopen_u = credits <= 0
+
+            status_kleur = "#FEE2E2" if verlopen_u else ("#DCFCE7" if u["actief"] else "#F1F5F9")
+            status_label = "⛔ Verlopen" if verlopen_u else ("✅ Actief" if u["actief"] else "⏸️ Inactief")
+
+            with st.expander(f"{'🔴' if verlopen_u else '🟢'} **{u['username']}** — {u.get('sportlab','–')}  |  {status_label}", expanded=False):
+                ec1, ec2, ec3 = st.columns(3)
+                ec1.markdown(f"**E-mail:** {u.get('email','–')}")
+                ec1.markdown(f"**Abonnement:** {u['abonnement']}")
+                if u["abonnement"] == "maand":
+                    ec2.markdown(f"**Betaald tot:** {betaald_tot or '–'}")
+                    nieuw_tot = ec2.date_input("Verleng tot", value=date.fromisoformat(str(betaald_tot)) if betaald_tot else date.today(), key=f"tot_{u['id']}")
+                    if ec2.button("💳 Verleng", key=f"vrl_{u['id']}"):
+                        sb.table("gebruikers").update({"betaald_tot": str(nieuw_tot), "actief": True}).eq("id", u["id"]).execute()
+                        st.success("Verlengd!"); st.rerun()
+                else:
+                    ec2.markdown(f"**Credits resterend:** {credits}")
+                    extra = ec2.number_input("Credits toevoegen", min_value=1, value=10, key=f"cred_{u['id']}")
+                    if ec2.button("➕ Credits", key=f"acred_{u['id']}"):
+                        sb.table("gebruikers").update({"credits": credits + extra}).eq("id", u["id"]).execute()
+                        st.success(f"{extra} credits toegevoegd!"); st.rerun()
+
+                ec3.markdown(f"**Notities:** {u.get('notities','–')}")
+                nieuw_nota = ec3.text_input("Notities aanpassen", value=u.get("notities",""), key=f"nota_{u['id']}")
+                bc1, bc2, bc3 = st.columns(3)
+                if bc1.button("💾 Opslaan", key=f"save_{u['id']}"):
+                    sb.table("gebruikers").update({"notities": nieuw_nota}).eq("id", u["id"]).execute()
+                    st.success("Opgeslagen!"); st.rerun()
+                nieuw_actief = "Deactiveer" if u["actief"] else "Activeer"
+                if bc2.button(nieuw_actief, key=f"act_{u['id']}"):
+                    sb.table("gebruikers").update({"actief": not u["actief"]}).eq("id", u["id"]).execute()
+                    st.rerun()
+                if bc3.button("🗑️ Verwijder", key=f"del_{u['id']}"):
+                    sb.table("gebruikers").delete().eq("id", u["id"]).execute()
+                    st.success("Verwijderd!"); st.rerun()
+
+if st.session_state.get("is_admin") and st.session_state.get("username") == "admin":
+    tab_main, tab_admin = st.tabs(["🔬 Inspanningstest", "⚙️ Admin Dashboard"])
+    with tab_admin:
+        admin_dashboard()
+    with tab_main:
+        pass  # hoofdapp volgt hieronder — wordt geladen in tab_main context
+    # Zet context naar tab_main voor rest van de code
+    _in_admin = True
+else:
+    _in_admin = False
+
+# ─────────────────────────────────────────────
 #  DATABASE (Supabase met session_state fallback)
 # ─────────────────────────────────────────────
-def get_supabase():
-    """Maak Supabase client aan via Streamlit secrets."""
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key) if SUPABASE_OK else None
-    except Exception:
-        return None
-
 def init_db():
     """Initialiseer lokale fallback opslag."""
     if "db_tests" not in st.session_state:
@@ -924,8 +1061,30 @@ h1{color:#0F172A !important;}
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("# 🚴 LacTan+")
+
+    # Account info
+    user_data = st.session_state.get("user_data", {})
+    uname     = st.session_state.get("username", "–")
+    abo       = user_data.get("abonnement", "–")
+    if abo == "maand":
+        betaald_tot = user_data.get("betaald_tot", "–")
+        st.markdown(f"""
+        <div style="background:#EFF6FF;border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:12.5px;">
+          👤 <b>{uname}</b><br>
+          📅 Abonnement actief t/m <b>{betaald_tot}</b>
+        </div>""", unsafe_allow_html=True)
+    elif abo == "credits":
+        cred = user_data.get("credits", 0)
+        kleur = "#FEF9C3" if cred <= 3 else "#EFF6FF"
+        st.markdown(f"""
+        <div style="background:{kleur};border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:12.5px;">
+          👤 <b>{uname}</b><br>
+          🔋 <b>{cred}</b> credits resterend
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"👤 **{uname}**")
+
     if st.button("Uitloggen", use_container_width=True):
-        # Bewaar database bij uitloggen — NIET wissen
         st.session_state.logged_in = False
         st.rerun()
     st.divider()
@@ -1211,6 +1370,12 @@ if not REPORTLAB_OK:
     st.warning("ReportLab niet geïnstalleerd. Voer uit: `pip install reportlab`")
 else:
     if st.button("Genereer professioneel PDF-rapport", type="primary", use_container_width=True):
+        # Credit check voor pay-per-use gebruikers
+        user_data_now = st.session_state.get("user_data", {})
+        if user_data_now.get("abonnement") == "credits":
+            if (user_data_now.get("credits") or 0) <= 0:
+                st.error("🔋 Geen credits meer. Neem contact op met de beheerder.")
+                st.stop()
         with st.spinner("PDF wordt aangemaakt..."):
             pdf = genereer_pdf(
                 naam=n_atl, geboortedatum=gebdat, sport=sport, doelen=doelen,
@@ -1223,6 +1388,18 @@ else:
                 labo_naam=labo_naam, is_lopen=is_lopen
             )
         if pdf:
+            # Trek 1 credit af bij credits-abonnement
+            if user_data_now.get("abonnement") == "credits":
+                sb = get_supabase()
+                if sb:
+                    try:
+                        nieuwe_cred = max(0, (user_data_now.get("credits") or 0) - 1)
+                        sb.table("gebruikers").update({"credits": nieuwe_cred}) \
+                          .eq("username", st.session_state.username).execute()
+                        st.session_state.user_data["credits"] = nieuwe_cred
+                        st.info(f"🔋 1 credit gebruikt. Resterend: {nieuwe_cred}")
+                    except Exception:
+                        pass
             st.download_button(
                 "Download PDF Rapport",
                 data=pdf,
