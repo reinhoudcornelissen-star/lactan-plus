@@ -233,6 +233,30 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
         c.drawString(58, y+6, f"{icon}  {tekst}" if icon else tekst)
         return y - 16   # extra ruimte onder sectietitel
 
+    def vo2_label(x, y, fontsize=10, bold=False):
+        """Schrijft VO2max met kleine subscript 2, zonder unicode"""
+        font = "Helvetica-Bold" if bold else "Helvetica"
+        c.setFont(font, fontsize)
+        c.drawString(x, y, "VO")
+        tw = c.stringWidth("VO", font, fontsize)
+        c.setFont(font, fontsize * 0.65)
+        c.drawString(x + tw, y - 2, "2")
+        tw2 = c.stringWidth("2", font, fontsize * 0.65)
+        c.setFont(font, fontsize)
+        c.drawString(x + tw + tw2, y, "max")
+
+    def vo2_label_centered(cx, y, fontsize=10, bold=False):
+        """Gecentreerde VO2max met subscript"""
+        font = "Helvetica-Bold" if bold else "Helvetica"
+        w_vo = c.stringWidth("VO", font, fontsize)
+        w_2  = c.stringWidth("2", font, fontsize * 0.65)
+        w_mx = c.stringWidth("max", font, fontsize)
+        total = w_vo + w_2 + w_mx
+        x = cx - total / 2
+        c.setFont(font, fontsize); c.drawString(x, y, "VO")
+        c.setFont(font, fontsize * 0.65); c.drawString(x + w_vo, y - 2, "2")
+        c.setFont(font, fontsize); c.drawString(x + w_vo + w_2, y, "max")
+
     def pill(label, value, unit, x, y, w=118, h=52, color=None):
         bg = color if color else light
         c.setFillColor(bg)
@@ -283,8 +307,8 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
 
     # ── Pills rij 2: fysiologie ──
     px = 45
-    pill("BMI",       f"{bmi:.1f}",         "kg/m²",      px, y - pill_h); px += pw+gap
-    pill("VO₂max",    f"{vo2_gem}",          "ml/kg/min",  px, y - pill_h); px += pw+gap
+    pill("BMI",       f"{bmi:.1f}",         "kg/m\u00b2",  px, y - pill_h); px += pw+gap
+    pill("VO2max",    f"{vo2_gem}",          "ml/kg/min",  px, y - pill_h); px += pw+gap
     pill("Max. Watt", f"{max_vals['Watt']}", "W",          px, y - pill_h); px += pw+gap
     pill("Max. HR",   f"{max_vals['HR']}",   "bpm",        px, y - pill_h)
 
@@ -447,23 +471,23 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     #  PAGINA 3  –  VO2max + Profiel
     # ════════════════════════════════════════════
     c.showPage()
-    draw_header("INSPANNINGSTEST", "VO\u2082max Analyse & Atletenprofiel", 3, 4)
+    draw_header("INSPANNINGSTEST", "VO2max Analyse & Atletenprofiel", 3, 4)
     y = H - 130
 
     # Atleet profiel
     y = section("ATLETENPROFIEL", y)
     y -= 14
-    RP = 24  # rij-hoogte profiel
+    RP = 24
     profiel = [
         ("Naam",               naam),
         ("Geboortedatum",      geboortedatum.strftime("%d/%m/%Y") if hasattr(geboortedatum, 'strftime') else str(geboortedatum)),
         ("Leeftijd",           f"{leeft} jaar"),
         ("Geslacht",           gesl),
-        ("Sport / Discipline", sport if sport else "–"),
-        ("Trainingsdoelen",    doelen if doelen else "–"),
+        ("Sport / Discipline", sport if sport else "-"),
+        ("Trainingsdoelen",    doelen if doelen else "-"),
         ("Testdatum",          str(datum)),
         ("Gewicht / Lengte",   f"{gew} kg  /  {leng} cm"),
-        ("BMI",                f"{bmi:.1f} kg/m\u00b2"),
+        ("BMI",                f"{bmi:.1f} kg/m2"),
     ]
     for pi, (lbl, val) in enumerate(profiel):
         if pi % 2 == 0:
@@ -472,64 +496,72 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
         c.setFillColor(navy); c.setFont("Helvetica", 10);      c.drawString(245, y+4, val)
         y -= RP
 
-    y -= 18
-    y = section("VO\u2082MAX ANALYSE", y)
-    y -= 14
+    y -= 24
 
-    # VO2 uitleg blok — 2 formules zichtbaar, geen kleine noot
-    blok_h2 = 72
+    # ── VO2MAX ANALYSE sectietitel handmatig (geen unicode) ──
+    c.setFillColor(blue); c.rect(45, y, W-90, 22, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#93C5FD")); c.rect(45, y, 5, 22, fill=1, stroke=0)
+    c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 10)
+    c.drawString(58, y+6, "VO2MAX ANALYSE")
+    y -= 16 + 16
+
+    blok_h2 = 68
     c.setFillColor(light); c.roundRect(45, y - blok_h2, W-90, blok_h2, 7, fill=1, stroke=0)
     c.setFillColor(grey_ln); c.roundRect(45, y - blok_h2, W-90, blok_h2, 7, fill=0, stroke=1)
     c.setFillColor(navy); c.setFont("Helvetica-Bold", 11)
-    c.drawString(58, y - 12, "Berekende VO\u2082max waarden:")
+    c.drawString(58, y - 12, "Berekende VO2max waarden:")
     c.setFont("Helvetica", 10.5); c.setFillColor(colors.HexColor("#374151"))
-    c.drawString(58, y - 30, f"Storer et al. (fietsergometer):        {vo2_storer} ml/kg/min")
-    c.drawString(58, y - 48, f"Legge & Banister (vermogen/gewicht):   {vo2_lb} ml/kg/min")
+    c.drawString(58, y - 28, f"Storer et al. (fietsergometer):        {vo2_storer} ml/kg/min")
+    c.drawString(58, y - 44, f"Legge & Banister (vermogen/gewicht):   {vo2_lb} ml/kg/min")
     c.setFont("Helvetica-Bold", 11); c.setFillColor(blue)
-    c.drawString(58, y - 64, f"Gemiddelde (aanbevolen waarde):        {vo2_gem} ml/kg/min")
-    y -= blok_h2 + 18
+    c.drawString(58, y - 60, f"Gemiddelde (aanbevolen waarde):        {vo2_gem} ml/kg/min")
+    y -= blok_h2 + 24
 
-    # VO2 normtabel
-    y = section("VO\u2082MAX REFERENTIEWAARDEN", y)
-    y -= 14
+    # ── VO2MAX REFERENTIEWAARDEN sectietitel ──
+    c.setFillColor(blue); c.rect(45, y, W-90, 22, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#93C5FD")); c.rect(45, y, 5, 22, fill=1, stroke=0)
+    c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 10)
+    c.drawString(58, y+6, "VO2MAX REFERENTIEWAARDEN  (ml/kg/min)")
+    y -= 16 + 16
 
+    # Normtabel: recreatief / competitief / topsport, man of vrouw
     if gesl == "Man":
         normen = [
-            ("< 30 jaar",  "<35", "35-42", "43-52", "53-60", ">60"),
-            ("30-39 jaar", "<33", "33-41", "42-49", "50-57", ">57"),
-            ("40-49 jaar", "<31", "31-38", "39-46", "47-54", ">54"),
-            ("50-59 jaar", "<26", "26-34", "35-42", "43-50", ">50"),
-            ("> 60 jaar",  "<20", "20-27", "28-35", "36-44", ">44"),
+            ("Recreatief",   "< 35",   "35 - 44",  "45 - 52",  "> 52"),
+            ("Competitief",  "< 50",   "50 - 57",  "58 - 64",  "> 64"),
+            ("Topsport",     "< 60",   "60 - 68",  "69 - 75",  "> 75"),
         ]
     else:
         normen = [
-            ("< 30 jaar",  "<24", "24-30", "31-37", "38-48", ">48"),
-            ("30-39 jaar", "<22", "22-29", "30-36", "37-44", ">44"),
-            ("40-49 jaar", "<20", "20-26", "27-33", "34-41", ">41"),
-            ("50-59 jaar", "<18", "18-23", "24-30", "31-38", ">38"),
-            ("> 60 jaar",  "<16", "16-21", "22-27", "28-35", ">35"),
+            ("Recreatief",   "< 28",   "28 - 35",  "36 - 42",  "> 42"),
+            ("Competitief",  "< 40",   "40 - 47",  "48 - 54",  "> 54"),
+            ("Topsport",     "< 50",   "50 - 57",  "58 - 65",  "> 65"),
         ]
 
-    RN = 22  # rij-hoogte normtabel
-    nrm_hdrs = ["Leeftijd", "Slecht", "Matig", "Gemiddeld", "Goed", "Uitstekend"]
-    nrm_cols = [55, 150, 225, 308, 392, 470]
-    nrm_clrs = [navy, colors.HexColor("#EF4444"), colors.HexColor("#F97316"),
-                colors.HexColor("#EAB308"), colors.HexColor("#22C55E"), colors.HexColor("#10B981")]
-    c.setFont("Helvetica-Bold", 9.5)
+    RN = 26
+    nrm_cols = [55, 175, 295, 385, 470]
+    nrm_hdrs = ["Niveau", "Matig", "Gemiddeld", "Goed", "Uitstekend"]
+    nrm_clrs = [navy, colors.HexColor("#F97316"), colors.HexColor("#EAB308"),
+                colors.HexColor("#22C55E"), colors.HexColor("#10B981")]
+    c.setFont("Helvetica-Bold", 10)
     for cx, hdr, cl in zip(nrm_cols, nrm_hdrs, nrm_clrs):
         c.setFillColor(cl); c.drawString(cx, y, hdr)
-    y -= 8; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= RN
+    y -= 9; c.setStrokeColor(blue); c.line(45, y, W-45, y); y -= RN
 
-    c.setFont("Helvetica", 9.5)
+    c.setFont("Helvetica", 10)
     for ni, rij in enumerate(normen):
         if ni % 2 == 0:
-            c.setFillColor(grey_bg); c.rect(45, y-5, W-90, RN, fill=1, stroke=0)
+            c.setFillColor(grey_bg); c.rect(45, y-6, W-90, RN, fill=1, stroke=0)
         for cx, val in zip(nrm_cols, rij):
-            c.setFillColor(navy); c.drawString(cx, y+4, val)
+            c.setFillColor(navy); c.drawString(cx, y+6, val)
         y -= RN
 
-    c.setFillColor(colors.HexColor("#64748B")); c.setFont("Helvetica-Oblique", 8.5)
-    c.drawString(55, y - 8, f"Gemeten VO\u2082max: {vo2_gem} ml/kg/min  |  Atleet: {naam}, {leeft} jaar, {gesl}")
+    # Gemeten waarde markering
+    y -= 14
+    c.setFillColor(colors.HexColor("#EFF6FF"))
+    c.roundRect(45, y - 30, W-90, 30, 5, fill=1, stroke=0)
+    c.setFillColor(blue); c.setFont("Helvetica-Bold", 10)
+    c.drawString(58, y - 19, f"Gemeten VO2max: {vo2_gem} ml/kg/min  |  {naam}  |  {leeft} jaar  |  {gesl}")
 
     footer()
 
