@@ -268,7 +268,7 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     # ════════════════════════════════════════════
     #  PAGINA 1  –  Overzicht & Grafiek
     # ════════════════════════════════════════════
-    draw_header("INSPANNINGSTEST", f"Fysiologisch Testrapport  |  {sport}", 1, 3)
+    draw_header("INSPANNINGSTEST", f"Fysiologisch Testrapport  |  {sport}", 1, 4)
     y = H - 130
 
     # ── Pills rij 1: antropometrie ──
@@ -279,7 +279,7 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     pill("Leeftijd", f"{leeft}", "jaar",   px,        y - pill_h); px += pw+gap
     pill("Geslacht", gesl,       "",       px,        y - pill_h)
 
-    y = y - pill_h - 14   # ruimte tussen de twee rijen pills
+    y = y - pill_h - 18   # ruimte tussen de twee rijen pills
 
     # ── Pills rij 2: fysiologie ──
     px = 45
@@ -288,10 +288,10 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     pill("Max. Watt", f"{max_vals['Watt']}", "W",          px, y - pill_h); px += pw+gap
     pill("Max. HR",   f"{max_vals['HR']}",   "bpm",        px, y - pill_h)
 
-    y = y - pill_h - 22   # ruimte onder pills, voor sectietitel
+    y = y - pill_h - 30   # ruimte onder pills, voor sectietitel
 
     y = section("METABOLE DREMPELS", y)
-    y -= 14   # lucht onder sectietitel
+    y -= 16   # lucht onder sectietitel
 
     # LT1 blok
     blok_h = 58
@@ -326,10 +326,10 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     c.setFont("Helvetica", 10)
     c.drawString(x2 + 13 + 80, y - 36, f"@ {int(lt2_hr)} bpm")
 
-    y = y - blok_h - 24   # ruimte onder drempelblokken
+    y = y - blok_h - 32   # ruimte onder drempelblokken
 
     y = section("LACTAAT- EN HARTSLAGCURVE", y)
-    y -= 10
+    y -= 14
     img_buf = BytesIO()
     fig.savefig(img_buf, format='png', dpi=200, bbox_inches='tight')
     img_buf.seek(0)
@@ -342,7 +342,7 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     #  PAGINA 2  –  Zones + Data + Energie
     # ════════════════════════════════════════════
     c.showPage()
-    draw_header("INSPANNINGSTEST", "Trainingszones & Meetdata", 2, 3)
+    draw_header("INSPANNINGSTEST", "Trainingszones & Meetdata", 2, 4)
     y = H - 130
 
     y = section("TRAININGSZONES", y)
@@ -424,11 +424,8 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
         y -= 10
 
         energie = {
-            "Basaalmetabolisme (BMR)":   (int(bmr),          "kcal/dag – ruststofwisseling"),
-            "Totaal dagelijks (TDEE)":   (int(tdee),         f"kcal/dag – PAL factor {pal:.1f}"),
-            "Energie lage intensiteit (Z1-Z2)": (int(tdee * 0.60), "kcal – duurtraining"),
-            "Energie hoge intensiteit (Z3-Z4)": (int(tdee * 0.28), "kcal – drempeltraining"),
-            "Energie maximaal (Z5)":     (int(tdee * 0.12),  "kcal – VO2max inspanning"),
+            "Basaalmetabolisme (BMR)": (int(bmr), "kcal/dag – ruststofwisseling"),
+            "Totaal dagelijks (TDEE)": (int(tdee), f"kcal/dag – PAL factor {pal:.1f}"),
         }
         c.setFont("Helvetica-Bold", 9.5); c.setFillColor(navy)
         c.drawString(55, y, "Component"); c.drawString(295, y, "Waarde"); c.drawString(390, y, "Toelichting")
@@ -447,10 +444,10 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     footer()
 
     # ════════════════════════════════════════════
-    #  PAGINA 3  –  VO2max + Profiel + Coach
+    #  PAGINA 3  –  VO2max + Profiel
     # ════════════════════════════════════════════
     c.showPage()
-    draw_header("INSPANNINGSTEST", "VO₂max Analyse & Coach Rapport", 3, 3)
+    draw_header("INSPANNINGSTEST", "VO\u2082max Analyse & Atletenprofiel", 3, 4)
     y = H - 130
 
     # Atleet profiel
@@ -466,7 +463,7 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
         ("Trainingsdoelen",    doelen if doelen else "–"),
         ("Testdatum",          str(datum)),
         ("Gewicht / Lengte",   f"{gew} kg  /  {leng} cm"),
-        ("BMI",                f"{bmi:.1f} kg/m²"),
+        ("BMI",                f"{bmi:.1f} kg/m\u00b2"),
     ]
     for pi, (lbl, val) in enumerate(profiel):
         if pi % 2 == 0:
@@ -476,25 +473,24 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
         y -= RP
 
     y -= 18
-    y = section("VO₂MAX ANALYSE", y)
+    y = section("VO\u2082MAX ANALYSE", y)
     y -= 14
 
-    # VO2 uitleg blok
-    c.setFillColor(light); c.roundRect(45, y-80, W-90, 88, 7, fill=1, stroke=0)
-    c.setFillColor(grey_ln); c.roundRect(45, y-80, W-90, 88, 7, fill=0, stroke=1)
+    # VO2 uitleg blok — 2 formules zichtbaar, geen kleine noot
+    blok_h2 = 72
+    c.setFillColor(light); c.roundRect(45, y - blok_h2, W-90, blok_h2, 7, fill=1, stroke=0)
+    c.setFillColor(grey_ln); c.roundRect(45, y - blok_h2, W-90, blok_h2, 7, fill=0, stroke=1)
     c.setFillColor(navy); c.setFont("Helvetica-Bold", 11)
-    c.drawString(58, y+2, "Berekende VO₂max waarden:")
+    c.drawString(58, y - 12, "Berekende VO\u2082max waarden:")
     c.setFont("Helvetica", 10.5); c.setFillColor(colors.HexColor("#374151"))
-    c.drawString(58, y-16, f"Storer et al. (fietsergometer):        {vo2_storer} ml/kg/min")
-    c.drawString(58, y-34, f"Legge & Banister (vermogen/gewicht):   {vo2_lb} ml/kg/min")
+    c.drawString(58, y - 30, f"Storer et al. (fietsergometer):        {vo2_storer} ml/kg/min")
+    c.drawString(58, y - 48, f"Legge & Banister (vermogen/gewicht):   {vo2_lb} ml/kg/min")
     c.setFont("Helvetica-Bold", 11); c.setFillColor(blue)
-    c.drawString(58, y-54, f"Gemiddelde (aanbevolen waarde):        {vo2_gem} ml/kg/min")
-    c.setFillColor(colors.HexColor("#94A3B8")); c.setFont("Helvetica", 8.5)
-    c.drawString(58, y-72, "Formules gebaseerd op maximaal vermogen op fietsergometer (Wmax) en lichaamsgewicht.")
-    y -= 98
+    c.drawString(58, y - 64, f"Gemiddelde (aanbevolen waarde):        {vo2_gem} ml/kg/min")
+    y -= blok_h2 + 18
 
     # VO2 normtabel
-    y = section("VO₂MAX REFERENTIEWAARDEN", y)
+    y = section("VO\u2082MAX REFERENTIEWAARDEN", y)
     y -= 14
 
     if gesl == "Man":
@@ -533,29 +529,49 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
         y -= RN
 
     c.setFillColor(colors.HexColor("#64748B")); c.setFont("Helvetica-Oblique", 8.5)
-    c.drawString(55, y-8, f"Gemeten VO₂max: {vo2_gem} ml/kg/min  |  Atleet: {naam}, {leeft} jaar, {gesl}")
-    y -= 28
+    c.drawString(55, y - 8, f"Gemeten VO\u2082max: {vo2_gem} ml/kg/min  |  Atleet: {naam}, {leeft} jaar, {gesl}")
 
-    # Coach opmerkingen
+    footer()
+
+    # ════════════════════════════════════════════
+    #  PAGINA 4  –  Opmerkingen & Advies Coach
+    # ════════════════════════════════════════════
+    c.showPage()
+    draw_header("INSPANNINGSTEST", "Opmerkingen & Advies Coach", 4, 4)
+    y = H - 130
+
     y = section("OPMERKINGEN & ADVIES COACH", y)
-    y -= 14
+    y -= 20
+
     tekst = opmerkingen.strip() if opmerkingen and opmerkingen.strip() else "Geen extra opmerkingen geformuleerd."
-    c.setFont("Helvetica", 10.5); c.setFillColor(navy)
+
+    # Groot tekstvak voor opmerkingen
+    tekstvak_h = 340
+    c.setFillColor(colors.HexColor("#F8FAFC"))
+    c.roundRect(45, y - tekstvak_h, W - 90, tekstvak_h, 7, fill=1, stroke=0)
+    c.setFillColor(grey_ln)
+    c.roundRect(45, y - tekstvak_h, W - 90, tekstvak_h, 7, fill=0, stroke=1)
+
+    tekst_y = y - 18
+    c.setFont("Helvetica", 11); c.setFillColor(navy)
     for line in tekst.split('\n'):
-        while len(line) > 85:
-            c.drawString(55, y, line[:85])
-            y -= 18; line = line[85:]
-        c.drawString(55, y, line); y -= 18
-        if y < 95:
+        words = line if line.strip() else " "
+        while len(words) > 80:
+            c.drawString(60, tekst_y, words[:80])
+            tekst_y -= 20; words = words[80:]
+        c.drawString(60, tekst_y, words)
+        tekst_y -= 20
+        if tekst_y < y - tekstvak_h + 15:
             break
 
+    y = y - tekstvak_h - 40
+
     # Handtekeningen
-    y = max(y - 32, 75)
     c.setStrokeColor(grey_ln); c.setLineWidth(0.8)
     c.line(55, y, 245, y); c.line(320, y, 515, y)
     c.setFillColor(colors.HexColor("#94A3B8")); c.setFont("Helvetica", 9)
-    c.drawString(55, y-16, "Handtekening coach")
-    c.drawString(320, y-16, "Handtekening atleet")
+    c.drawString(55, y - 16, "Handtekening coach")
+    c.drawString(320, y - 16, "Handtekening atleet")
 
     footer()
     c.save()
