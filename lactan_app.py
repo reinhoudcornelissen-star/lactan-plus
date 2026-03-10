@@ -36,49 +36,51 @@ def check_login():
         return True
     st.markdown("""
         <style>
-        [data-testid="stAppViewContainer"]{
-            background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%);
+        [data-testid="stAppViewContainer"] {
+            background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 100%) !important;
         }
-        [data-testid="stMain"] { background: transparent; }
-        .login-card {
-            max-width: 440px;
-            margin: 80px auto 0 auto;
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-            padding: 48px 44px 40px 44px;
-        }
-        .login-logo {
-            font-size: 42px;
-            text-align: center;
-            margin-bottom: 4px;
+        [data-testid="stMain"] { background: transparent !important; }
+        [data-testid="stHeader"] { background: transparent !important; }
+        .block-container { padding-top: 0 !important; }
+        .login-outer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+            padding-top: 40px;
         }
         .login-title {
+            font-size: 52px;
+            font-weight: 900;
+            color: white !important;
             text-align: center;
-            font-size: 28px;
-            font-weight: 800;
-            color: #0F172A;
-            margin-bottom: 2px;
+            letter-spacing: -1px;
+            margin-bottom: 6px;
+        }
+        .login-plus {
+            color: #1E88E5;
         }
         .login-sub {
             text-align: center;
-            font-size: 14px;
-            color: #64748B;
-            margin-bottom: 28px;
+            font-size: 16px;
+            color: #93C5FD;
+            margin-bottom: 36px;
         }
-        .login-divider {
-            border: none;
-            border-top: 1px solid #E2E8F0;
-            margin: 0 0 24px 0;
+        .login-card {
+            background: white;
+            border-radius: 16px;
+            padding: 36px 40px 32px 40px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 24px 60px rgba(0,0,0,0.5);
         }
-        label { color: #1E293B !important; font-weight: 600 !important; }
-        input { color: #0F172A !important; }
+        label { color: #1E293B !important; font-weight: 600 !important; font-size: 14px !important; }
         .stTextInput > div > div > input {
             border: 1.5px solid #CBD5E1 !important;
             border-radius: 8px !important;
-            padding: 10px 14px !important;
-            font-size: 15px !important;
             color: #0F172A !important;
+            background: white !important;
         }
         .stButton > button {
             background: linear-gradient(90deg, #1E88E5, #1565C0) !important;
@@ -89,74 +91,70 @@ def check_login():
             padding: 12px !important;
             border: none !important;
             margin-top: 8px !important;
+            width: 100% !important;
         }
         .login-footer {
             text-align: center;
             font-size: 11px;
-            color: #94A3B8;
-            margin-top: 20px;
+            color: #64748B;
+            margin-top: 18px;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="login-card">', unsafe_allow_html=True)
-    st.markdown('<div class="login-logo">🚴</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-title">LacTan+</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-sub">Inspanningstest Platform — Sportlab</div>', unsafe_allow_html=True)
-    st.markdown('<hr class="login-divider">', unsafe_allow_html=True)
-
-    username = st.text_input("Gebruikersnaam", placeholder="Voer gebruikersnaam in")
-    password = st.text_input("Wachtwoord", type="password", placeholder="Voer wachtwoord in")
-
-    if st.button("Inloggen", type="primary", use_container_width=True):
-        if username in USERS and USERS[username] == password:
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("❌ Ongeldige gebruikersnaam of wachtwoord")
-
-    st.markdown('<div class="login-footer">© 2026 LacTan+ · Vertrouwelijk platform voor sportlaboratoria</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown('<div class="login-title">LacTan<span class="login-plus">+</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-sub">Inspanningstest Platform</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+        username = st.text_input("Gebruikersnaam", placeholder="Voer gebruikersnaam in")
+        password = st.text_input("Wachtwoord", type="password", placeholder="Voer wachtwoord in")
+        if st.button("Inloggen", type="primary", use_container_width=True):
+            if username in USERS and USERS[username] == password:
+                st.session_state.logged_in = True
+                st.rerun()
+            else:
+                st.error("❌ Ongeldige gebruikersnaam of wachtwoord")
+        st.markdown('<div class="login-footer">© 2026 LacTan+ · Vertrouwelijk platform voor sportlaboratoria</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     return False
 
 if not check_login():
     st.stop()
 
 # ─────────────────────────────────────────────
-#  DATABASE
+#  DATABASE (session_state - werkt op Streamlit Cloud)
 # ─────────────────────────────────────────────
 def init_db():
-    conn = sqlite3.connect('sportlab_data.db')
-    conn.execute('''CREATE TABLE IF NOT EXISTS tests
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     naam TEXT, datum TEXT, watt TEXT, lac TEXT, hr TEXT)''')
-    conn.commit()
-    conn.close()
+    if "db_tests" not in st.session_state:
+        st.session_state.db_tests = []
+    if "db_next_id" not in st.session_state:
+        st.session_state.db_next_id = 1
 
 def save_test(naam, datum, watt_list, lac_list, hr_list):
-    conn = sqlite3.connect('sportlab_data.db')
-    conn.execute("INSERT INTO tests (naam, datum, watt, lac, hr) VALUES (?,?,?,?,?)",
-                 (naam, str(datum),
-                  ",".join([str(float(v)) for v in watt_list]),
-                  ",".join([str(float(v)) for v in lac_list]),
-                  ",".join([str(float(v)) for v in hr_list])))
-    conn.commit()
-    conn.close()
+    init_db()
+    record = {
+        "id":    st.session_state.db_next_id,
+        "naam":  naam,
+        "datum": str(datum),
+        "watt":  ",".join([str(float(v)) for v in watt_list]),
+        "lac":   ",".join([str(float(v)) for v in lac_list]),
+        "hr":    ",".join([str(float(v)) for v in hr_list]),
+    }
+    st.session_state.db_tests.insert(0, record)
+    st.session_state.db_next_id += 1
 
 def load_tests():
-    conn = sqlite3.connect('sportlab_data.db')
-    try:
-        df = pd.read_sql("SELECT * FROM tests ORDER BY id DESC", conn)
-    except Exception:
-        df = pd.DataFrame()
-    conn.close()
-    return df
+    init_db()
+    if not st.session_state.db_tests:
+        return pd.DataFrame()
+    return pd.DataFrame(st.session_state.db_tests)
 
 def delete_test(test_id):
-    conn = sqlite3.connect('sportlab_data.db')
-    conn.execute("DELETE FROM tests WHERE id = ?", (int(test_id),))
-    conn.commit()
-    conn.close()
+    init_db()
+    st.session_state.db_tests = [
+        r for r in st.session_state.db_tests if r["id"] != int(test_id)
+    ]
 
 init_db()
 
@@ -568,35 +566,38 @@ def genereer_pdf(naam, geboortedatum, sport, doelen, datum,
     c.drawString(58, y+6, "VO2MAX ANALYSE")
     y -= 16 + 16
 
-    blok_h2 = 78
+    blok_h2 = 82
     c.setFillColor(light); c.roundRect(45, y - blok_h2, W-90, blok_h2, 7, fill=1, stroke=0)
     c.setFillColor(grey_ln); c.roundRect(45, y - blok_h2, W-90, blok_h2, 7, fill=0, stroke=1)
 
-    # Header rij
-    c.setFillColor(navy); c.setFont("Helvetica-Bold", 10)
-    c.drawString(60, y - 13, "Methode")
-    c.drawRightString(W - 60, y - 13, "VO2max (ml/kg/min)")
+    col_l = 58
+    col_r = W - 58
+
+    # Header
+    c.setFillColor(navy); c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(col_l, y - 12, "Methode")
+    c.drawRightString(col_r, y - 12, "VO2max (ml/kg/min)")
     c.setStrokeColor(grey_ln); c.setLineWidth(0.5)
-    c.line(60, y - 18, W - 60, y - 18)
+    c.line(col_l, y - 16, col_r, y - 16)
 
-    # Rij 1: Storer
+    # Rij 1
     c.setFont("Helvetica", 10); c.setFillColor(colors.HexColor("#374151"))
-    c.drawString(60, y - 32, "Storer et al. (fietsergometer)")
+    c.drawString(col_l, y - 30, "Storer et al. (fietsergometer)")
     c.setFont("Helvetica-Bold", 10); c.setFillColor(navy)
-    c.drawRightString(W - 60, y - 32, f"{vo2_storer} ml/kg/min")
+    c.drawRightString(col_r, y - 30, f"{vo2_storer} ml/kg/min")
 
-    # Rij 2: Legge
-    c.setFillColor(grey_bg); c.rect(45, y - 50, W - 90, 18, fill=1, stroke=0)
+    # Rij 2 (shaded)
+    c.setFillColor(grey_bg); c.rect(46, y - 49, W - 93, 17, fill=1, stroke=0)
     c.setFont("Helvetica", 10); c.setFillColor(colors.HexColor("#374151"))
-    c.drawString(60, y - 45, "Legge & Banister (vermogen/gewicht)")
+    c.drawString(col_l, y - 45, "Legge & Banister (vermogen/gewicht)")
     c.setFont("Helvetica-Bold", 10); c.setFillColor(navy)
-    c.drawRightString(W - 60, y - 45, f"{vo2_lb} ml/kg/min")
+    c.drawRightString(col_r, y - 45, f"{vo2_lb} ml/kg/min")
 
-    # Rij 3: Gemiddelde (highlighted)
-    c.setFillColor(colors.HexColor("#DBEAFE")); c.rect(45, y - 68, W - 90, 18, fill=1, stroke=0)
+    # Rij 3 (highlighted blauw)
+    c.setFillColor(colors.HexColor("#DBEAFE")); c.rect(46, y - 68, W - 93, 17, fill=1, stroke=0)
     c.setFont("Helvetica-Bold", 10); c.setFillColor(blue)
-    c.drawString(60, y - 62, "Gemiddelde (aanbevolen waarde)")
-    c.drawRightString(W - 60, y - 62, f"{vo2_gem} ml/kg/min")
+    c.drawString(col_l, y - 63, "Gemiddelde (aanbevolen waarde)")
+    c.drawRightString(col_r, y - 63, f"{vo2_gem} ml/kg/min")
 
     y -= blok_h2 + 24
 
