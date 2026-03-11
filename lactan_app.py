@@ -79,25 +79,46 @@ def login_gebruiker(username, password):
     sb = get_supabase()
     if sb:
         try:
+            # Zoek op username + password, zonder actief filter eerst
             res = sb.table("gebruikers") \
                     .select("*") \
                     .eq("username", username) \
-                    .eq("password", password) \
-                    .eq("actief", True) \
                     .execute()
-            if res.data:
-                u = res.data[0]
-                # Check geldigheid
-                if u["abonnement"] == "maand" and u.get("betaald_tot"):
-                    betaald_tot = date.fromisoformat(str(u["betaald_tot"]))
-                    if betaald_tot < date.today():
-                        return None, "verlopen"
-                if u["abonnement"] == "credits" and (u.get("credits") or 0) <= 0:
+            if not res.data:
+                return None, "fout"  # gebruiker bestaat niet
+
+            u = res.data[0]
+
+            # Check wachtwoord
+            if str(u.get("password", "")) != str(password):
+                return None, "fout"
+
+            # Check actief
+            if not u.get("actief", False):
+                return None, "fout"
+
+            # Check geldigheid abonnement
+            abo = u.get("abonnement", "geen")
+            if abo == "maand":
+                betaald_tot = u.get("betaald_tot")
+                if betaald_tot:
+                    try:
+                        if date.fromisoformat(str(betaald_tot)) < date.today():
+                            return None, "verlopen"
+                    except Exception:
+                        pass
+            elif abo == "credits":
+                if (u.get("credits") or 0) <= 0:
                     return None, "geen_credits"
-                return u, "ok"
+            # abonnement "geen" of onbekend: gewoon toelaten als actief
+
+            return u, "ok"
+
         except Exception as e:
+            # Supabase fout — probeer fallback
             pass
-    # Fallback: Streamlit Secrets (voor admin)
+
+    # Fallback: Streamlit Secrets (voor admin of als Supabase niet beschikbaar)
     try:
         USERS = dict(st.secrets.get("users", {}))
         if username in USERS and USERS[username] == password:
@@ -105,6 +126,7 @@ def login_gebruiker(username, password):
                     "sportlab": "Admin", "credits": 999}, "ok"
     except Exception:
         pass
+
     return None, "fout"
 
 def check_login():
@@ -133,7 +155,11 @@ def check_login():
             elif status == "geen_credits":
                 st.error("🔋 Geen credits meer. Neem contact op voor aanvulling.")
             else:
-                st.error("❌ Ongeldige gebruikersnaam of wachtwoord")
+                sb_check = get_supabase()
+                if sb_check is None:
+                    st.error("❌ Geen verbinding met database. Probeer opnieuw.")
+                else:
+                    st.error("❌ Ongeldige gebruikersnaam of wachtwoord")
         st.markdown('<div class="login-footer">© 2026 LacTan+ · Vertrouwelijk platform voor sportlaboratoria</div>', unsafe_allow_html=True)
     return False
 
