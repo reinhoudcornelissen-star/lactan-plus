@@ -11,7 +11,7 @@ from io import BytesIO
 
 st.set_page_config(
     page_title="LacTan+",
-    page_icon="https://raw.githubusercontent.com/reinhoudcornelissen-star/lactan-plus/main/favicon.ico",
+    page_icon="https://raw.githubusercontent.com/reinhoudcornelissen-star/lactan-plus/main/lactan_icon_192.png",
     layout="wide"
 )
 
