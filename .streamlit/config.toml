@@ -1,5 +1,8 @@
 [theme]
-base = "dark"
+base = "light"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
 
 [browser]
 gatherUsageStats = false
