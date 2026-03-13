@@ -9,6 +9,12 @@ from scipy.interpolate import PchipInterpolator
 from datetime import date, datetime
 from io import BytesIO
 
+st.set_page_config(
+    page_title="LacTan+",
+    page_icon="favicon.ico",
+    layout="wide"
+)
+
 try:
     from supabase import create_client, Client
     SUPABASE_OK = True
